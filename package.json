@@ -58,7 +58,7 @@
   "devDependencies": {
     "@types/node": "^26.2.0",
     "@types/inquirer": "^9.0.10",
-    "typescript": "^7.0.2",
+    "typescript": "^6.0.2",
     "vitest": "^4.1.11",
     "eslint": "^10.8.1",
     "@typescript-eslint/eslint-plugin": "^8.67.0",
