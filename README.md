@@ -33,6 +33,20 @@ claude-sync init
 
 That's it. Three commands. Now your `.claude/` directory syncs across all your machines.
 
+### Installing from source
+
+Prefer to build from a local clone instead of the published package:
+
+```bash
+git clone https://github.com/claude-sync/claude-sync.git
+cd claude-sync
+npm install
+npm run build
+npm link
+```
+
+`npm link` puts the `claude-sync` command on your `PATH`, pointing at this local build. Run `npm unlink -g claude-sync` to remove it later.
+
 ---
 
 ## The Problem

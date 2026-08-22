@@ -154,7 +154,26 @@ export class GitBackend implements SyncBackend {
         }
 
         // Merge
-        await this.git('merge', `origin/${this.branch}`, '--no-edit');
+        try {
+          await this.git('merge', `origin/${this.branch}`, '--no-edit');
+        } catch (err) {
+          if (!/refusing to merge unrelated histories/i.test((err as Error).message)) {
+            throw err;
+          }
+          // The local repo was initialized independently of the remote (e.g. a
+          // clone attempt failed and init() fell back to `git init` locally).
+          // Retry allowing unrelated histories instead of losing local history.
+          try {
+            await this.git(
+              'merge', `origin/${this.branch}`, '--no-edit', '--allow-unrelated-histories'
+            );
+          } catch (mergeErr) {
+            await this.git('merge', '--abort').catch(() => {});
+            throw new Error(
+              `Merge conflict while reconciling unrelated histories: ${(mergeErr as Error).message}`
+            );
+          }
+        }
       }
 
       // Copy repo contents to the target .claude/ directory

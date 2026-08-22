@@ -47,7 +47,7 @@ export async function restoreCommand(snapshotRef: string, options: RestoreOption
       console.log('');
 
       const { chosen } = await inquirer.prompt([{
-        type: 'list',
+        type: 'select',
         name: 'chosen',
         message: 'Which snapshot?',
         choices: dateMatches.map(s => ({

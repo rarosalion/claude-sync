@@ -137,7 +137,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
     });
 
     const answer = await inquirer.prompt([{
-      type: 'list',
+      type: 'select',
       name: 'backend',
       message: 'How do you want to sync?',
       choices: backendChoices,
@@ -179,7 +179,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
         console.log(chalk.dim(`  Auto-detected: ${provider} at ${cloudPath}`));
       } else if (availableClouds.length > 1) {
         const answer = await inquirer.prompt([{
-          type: 'list',
+          type: 'select',
           name: 'provider',
           message: 'Which cloud storage?',
           choices: availableClouds.map(c => ({
@@ -192,7 +192,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
       } else {
         const answer = await inquirer.prompt([
           {
-            type: 'list',
+            type: 'select',
             name: 'provider',
             message: 'Which cloud provider?',
             choices: ['dropbox', 'icloud', 'onedrive'],
