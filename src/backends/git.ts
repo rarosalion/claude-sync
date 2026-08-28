@@ -13,6 +13,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import type { SyncBackend, BackendConfig, SyncResult, SyncStatus } from '../types.js';
+import { Merger } from '../core/merger.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -21,9 +22,10 @@ export class GitBackend implements SyncBackend {
   private repoDir: string;
   private remoteUrl: string;
   private branch: string;
+  private merger = new Merger();
 
-  constructor(config?: BackendConfig) {
-    this.repoDir = path.join(os.homedir(), '.claude-sync', 'repo');
+  constructor(config?: BackendConfig, repoDirOverride?: string) {
+    this.repoDir = repoDirOverride ?? path.join(os.homedir(), '.claude-sync', 'repo');
     this.remoteUrl = config?.remoteUrl ?? '';
     this.branch = config?.branch ?? 'main';
   }
@@ -298,10 +300,16 @@ export class GitBackend implements SyncBackend {
   }
 
   /**
-   * Copy git repo contents to the .claude/ directory
+   * Copy git repo contents to the .claude/ directory.
+   *
+   * Uses mergeTree, not copyTree: a plain overwrite here would clobber any
+   * live edit made between the last push and this pull (e.g. memory files
+   * written mid-session) with whatever the repo mirror last had. mergeTree
+   * runs each file through the Merger's configured strategy (merge-append
+   * for memory files, latest-wins for settings, etc.) instead.
    */
   private async syncFromRepo(targetPath: string): Promise<void> {
-    await this.copyTree(this.repoDir, targetPath, ['.git', '.gitignore']);
+    await this.mergeTree(this.repoDir, targetPath, ['.git', '.gitignore'], '');
   }
 
   private async copyTree(source: string, target: string, exclude: string[]): Promise<void> {
@@ -326,5 +334,61 @@ export class GitBackend implements SyncBackend {
         await fs.copyFile(srcPath, destPath);
       }
     }
+  }
+
+  /**
+   * Like copyTree, but for existing destination files, merges through the
+   * Merger's configured strategy for that path instead of blindly
+   * overwriting. New files (nothing at the destination yet) are just copied
+   * - there's nothing local to conflict with.
+   */
+  private async mergeTree(
+    source: string,
+    target: string,
+    exclude: string[],
+    relativeBase: string
+  ): Promise<void> {
+    await fs.mkdir(target, { recursive: true });
+
+    let entries;
+    try {
+      entries = await fs.readdir(source, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (exclude.includes(entry.name)) continue;
+
+      const srcPath = path.join(source, entry.name);
+      const destPath = path.join(target, entry.name);
+      const relPath = relativeBase ? `${relativeBase}/${entry.name}` : entry.name;
+
+      if (entry.isDirectory()) {
+        await this.mergeTree(srcPath, destPath, exclude, relPath);
+      } else if (entry.isFile()) {
+        await this.mergeFile(srcPath, destPath, relPath);
+      }
+    }
+  }
+
+  private async mergeFile(srcPath: string, destPath: string, relPath: string): Promise<void> {
+    let destExists = true;
+    try {
+      await fs.access(destPath);
+    } catch {
+      destExists = false;
+    }
+
+    if (!destExists) {
+      await fs.copyFile(srcPath, destPath);
+      return;
+    }
+
+    // merger.merge treats its first argument as "local" (this device's
+    // current state) and the second as "remote" (what came from the repo
+    // mirror) - that maps directly onto destPath/srcPath here.
+    const { content } = await this.merger.merge(destPath, srcPath, relPath);
+    await fs.writeFile(destPath, content, 'utf-8');
   }
 }
