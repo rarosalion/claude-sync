@@ -172,28 +172,38 @@ export class Merger {
 
   /**
    * Merge by appending unique lines. Great for memory files.
-   * Splits on section headers (## lines), deduplicates sections by hash.
+   *
+   * Local's own content is kept exactly as-is, including any legitimately
+   * repeated line (e.g. YAML frontmatter's opening/closing `---`, a markdown
+   * divider used more than once) - a naive "dedupe every line I've seen"
+   * pass would collapse those down to one occurrence and corrupt the file,
+   * even with no remote content involved at all. Only remote's lines that
+   * go *beyond* how many times local already has that same line get
+   * appended - so if both sides have a two-`---` frontmatter, remote's
+   * matching pair is recognized as already represented and isn't added
+   * again, while remote content that's genuinely new (even if the same line
+   * value appears more than local has it) still comes through.
    */
   private mergeAppend(local: string, remote: string): string {
     const localLines = local.split('\n');
     const remoteLines = remote.split('\n');
 
-    // Collect unique lines by content hash
-    const seen = new Set<string>();
-    const result: string[] = [];
+    const result: string[] = [...localLines];
 
+    const localCounts = new Map<string, number>();
     for (const line of localLines) {
       const hash = this.lineHash(line);
-      if (!seen.has(hash)) {
-        seen.add(hash);
-        result.push(line);
-      }
+      localCounts.set(hash, (localCounts.get(hash) ?? 0) + 1);
     }
 
+    const remoteSeenCounts = new Map<string, number>();
     for (const line of remoteLines) {
       const hash = this.lineHash(line);
-      if (!seen.has(hash)) {
-        seen.add(hash);
+      const seenSoFar = (remoteSeenCounts.get(hash) ?? 0) + 1;
+      remoteSeenCounts.set(hash, seenSoFar);
+
+      const availableInLocal = localCounts.get(hash) ?? 0;
+      if (seenSoFar > availableInLocal) {
         result.push(line);
       }
     }

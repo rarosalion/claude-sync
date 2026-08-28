@@ -109,6 +109,46 @@ describe('Merger', () => {
       const lineACount = lines.filter(l => l.trim() === 'Line A').length;
       expect(lineACount).toBe(1); // Deduplicated
     });
+
+    it('preserves a legitimately repeated line within one side, like YAML frontmatter delimiters', async () => {
+      const localFile = path.join(tmpDir, 'local.md');
+      const remoteFile = path.join(tmpDir, 'remote.md');
+
+      // Both sides are valid frontmatter-delimited files - `---` appears
+      // twice in each, on its own, which is structurally required, not a
+      // duplicate to collapse. Content between the delimiters differs.
+      await fs.writeFile(
+        localFile,
+        '---\nname: test\nmodified: 2025-01-01\n---\n\nbody text\n'
+      );
+      await fs.writeFile(
+        remoteFile,
+        '---\nname: test\nmodified: 2025-01-02\n---\n\nbody text\n'
+      );
+
+      const result = await merger.merge(localFile, remoteFile, 'memory/test.md');
+
+      const dashCount = result.content.split('\n').filter(l => l.trim() === '---').length;
+      expect(dashCount).toBe(2); // Both delimiters survive - the file is still valid frontmatter.
+      expect(result.content).toContain('modified: 2025-01-01');
+      expect(result.content).toContain('modified: 2025-01-02'); // Remote's differing value still comes through.
+    });
+
+    it('does not duplicate a line that legitimately appears the same number of times on both sides', async () => {
+      const localFile = path.join(tmpDir, 'local.md');
+      const remoteFile = path.join(tmpDir, 'remote.md');
+
+      await fs.writeFile(localFile, '---\nLine A\n---\n');
+      await fs.writeFile(remoteFile, '---\nLine A\n---\n');
+
+      const result = await merger.merge(localFile, remoteFile, 'memory/test.md');
+
+      // Identical content end to end - the "identical content" fast path
+      // should apply, not even reach mergeAppend, but assert the outcome
+      // either way: no tripling/quadrupling of the shared lines.
+      const dashCount = result.content.split('\n').filter(l => l.trim() === '---').length;
+      expect(dashCount).toBe(2);
+    });
   });
 
   // ── Merge: Chronological Strategy ─────────────────────────
