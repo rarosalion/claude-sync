@@ -15,7 +15,7 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
   const config = await loadConfig();
   if (!config) return;
 
-  const backend = getBackend(config.backend);
+  const backend = getBackend(config.backend, config.selective);
   const status = await backend.status();
 
   if (options.json) {

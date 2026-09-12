@@ -12,13 +12,8 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
-import { CONFIG_DIR, CONFIG_FILE, SYNC_LOCK_FILE } from '../types.js';
-import type { SyncConfig } from '../types.js';
-import { GitBackend } from '../backends/git.js';
-import { CloudBackend } from '../backends/dropbox.js';
-import { SyncthingBackend } from '../backends/syncthing.js';
-import { RsyncBackend } from '../backends/rsync.js';
-import { CustomBackend } from '../backends/custom.js';
+import { CONFIG_DIR, SYNC_LOCK_FILE } from '../types.js';
+import { loadConfig, getBackend } from '../cli/helpers.js';
 import { DeviceRegistry } from '../core/device-registry.js';
 import { SnapshotManager } from '../core/snapshot.js';
 
@@ -42,7 +37,7 @@ export async function onSessionEnd(): Promise<string> {
     await fs.writeFile(lockFile, `${process.pid}`, 'utf-8');
 
     const claudeDir = path.join(os.homedir(), '.claude');
-    const backend = createBackend(config);
+    const backend = getBackend(config.backend, config.selective);
 
     // Create a snapshot before pushing (for history)
     const snapshots = new SnapshotManager();
@@ -88,27 +83,6 @@ export async function onSessionEnd(): Promise<string> {
 }
 
 // ── Helpers ──────────────────────────────────────────────────
-
-async function loadConfig(): Promise<SyncConfig | null> {
-  try {
-    const configFile = path.join(os.homedir(), CONFIG_DIR, CONFIG_FILE);
-    const content = await fs.readFile(configFile, 'utf-8');
-    return JSON.parse(content) as SyncConfig;
-  } catch {
-    return null;
-  }
-}
-
-function createBackend(config: SyncConfig) {
-  switch (config.backend.type) {
-    case 'git': return new GitBackend(config.backend);
-    case 'cloud': return new CloudBackend(config.backend);
-    case 'syncthing': return new SyncthingBackend(config.backend);
-    case 'rsync': return new RsyncBackend(config.backend);
-    case 'custom': return new CustomBackend(config.backend);
-    default: throw new Error(`Unknown backend: ${config.backend.type}`);
-  }
-}
 
 async function fileExists(p: string): Promise<boolean> {
   try {

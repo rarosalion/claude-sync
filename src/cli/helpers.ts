@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import chalk from 'chalk';
 import { CONFIG_DIR, CONFIG_FILE } from '../types.js';
-import type { SyncConfig, BackendConfig, SyncBackend } from '../types.js';
+import type { SyncConfig, BackendConfig, SyncBackend, SelectiveSyncConfig } from '../types.js';
 import { GitBackend } from '../backends/git.js';
 import { CloudBackend } from '../backends/dropbox.js';
 import { SyncthingBackend } from '../backends/syncthing.js';
@@ -42,12 +42,17 @@ export async function saveConfig(config: SyncConfig): Promise<void> {
 }
 
 /**
- * Create the appropriate backend from config
+ * Create the appropriate backend from config.
+ *
+ * selectiveConfig is currently only wired into GitBackend - the one backend actually exercised
+ * by real usage. The other backends' own copy paths (cloud's folder sync, custom's user-supplied
+ * commands, etc.) don't consult it; extending selective sync to those is a separate, untested
+ * change, not bundled in here.
  */
-export function getBackend(backendConfig: BackendConfig): SyncBackend {
+export function getBackend(backendConfig: BackendConfig, selectiveConfig?: SelectiveSyncConfig): SyncBackend {
   switch (backendConfig.type) {
     case 'git':
-      return new GitBackend(backendConfig);
+      return new GitBackend(backendConfig, undefined, selectiveConfig);
     case 'cloud':
       return new CloudBackend(backendConfig);
     case 'syncthing':

@@ -12,10 +12,13 @@ import { promisify } from 'node:util';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import type { SyncBackend, BackendConfig, SyncResult, SyncStatus } from '../types.js';
+import type { SyncBackend, BackendConfig, SyncResult, SyncStatus, SelectiveSyncConfig } from '../types.js';
 import { Merger } from '../core/merger.js';
+import { shouldSyncPath } from '../core/selective.js';
 
 const execFileAsync = promisify(execFile);
+
+const SYNC_ALL: SelectiveSyncConfig = { mode: 'all', include: [], exclude: [] };
 
 export class GitBackend implements SyncBackend {
   readonly type = 'git' as const;
@@ -23,11 +26,16 @@ export class GitBackend implements SyncBackend {
   private remoteUrl: string;
   private branch: string;
   private merger = new Merger();
+  private selectiveConfig: SelectiveSyncConfig;
 
-  constructor(config?: BackendConfig, repoDirOverride?: string) {
+  constructor(config?: BackendConfig, repoDirOverride?: string, selectiveConfig?: SelectiveSyncConfig) {
     this.repoDir = repoDirOverride ?? path.join(os.homedir(), '.claude-sync', 'repo');
     this.remoteUrl = config?.remoteUrl ?? '';
     this.branch = config?.branch ?? 'main';
+    // Defaults to "sync everything" so anything constructing a GitBackend directly (tests,
+    // other tooling) without passing this keeps today's behavior - only getBackend() (the real
+    // CLI path) has a SyncConfig.selective to pass through.
+    this.selectiveConfig = selectiveConfig ?? SYNC_ALL;
   }
 
   async init(config: BackendConfig): Promise<void> {
@@ -296,7 +304,7 @@ export class GitBackend implements SyncBackend {
    * Copy .claude/ contents into the git repo working directory
    */
   private async syncToRepo(sourcePath: string): Promise<void> {
-    await this.copyTree(sourcePath, this.repoDir, ['.git']);
+    await this.copyTree(sourcePath, this.repoDir, ['.git'], '');
   }
 
   /**
@@ -312,7 +320,24 @@ export class GitBackend implements SyncBackend {
     await this.mergeTree(this.repoDir, targetPath, ['.git', '.gitignore'], '');
   }
 
-  private async copyTree(source: string, target: string, exclude: string[]): Promise<void> {
+  /**
+   * relativeBase accumulates the path relative to the original sourcePath as recursion
+   * descends, so each file can be tested against a full multi-segment selective-sync pattern
+   * (e.g. a wildcard project name followed by a literal memory subdirectory and a trailing
+   * double-star) rather than just its own directory name. Deliberately does not
+   * prune recursion at a directory whose own relative path fails the filter - a directory like
+   * `projects` won't itself match a pattern that only matches something nested inside it (see
+   * selective.ts's matchGlob doc comment) - so every directory is still walked, and the
+   * filtering decision is made per file. This can leave some empty directories on the
+   * destination (a walked-but-nothing-matched directory still gets its own `mkdir`) - a minor
+   * cosmetic cost, not a correctness problem worth a pre-scan to avoid.
+   */
+  private async copyTree(
+    source: string,
+    target: string,
+    exclude: string[],
+    relativeBase: string
+  ): Promise<void> {
     await fs.mkdir(target, { recursive: true });
 
     let entries;
@@ -327,10 +352,12 @@ export class GitBackend implements SyncBackend {
 
       const srcPath = path.join(source, entry.name);
       const destPath = path.join(target, entry.name);
+      const relPath = relativeBase ? `${relativeBase}/${entry.name}` : entry.name;
 
       if (entry.isDirectory()) {
-        await this.copyTree(srcPath, destPath, exclude);
+        await this.copyTree(srcPath, destPath, exclude, relPath);
       } else if (entry.isFile()) {
+        if (!shouldSyncPath(relPath, this.selectiveConfig)) continue;
         await fs.copyFile(srcPath, destPath);
       }
     }
@@ -367,6 +394,7 @@ export class GitBackend implements SyncBackend {
       if (entry.isDirectory()) {
         await this.mergeTree(srcPath, destPath, exclude, relPath);
       } else if (entry.isFile()) {
+        if (!shouldSyncPath(relPath, this.selectiveConfig)) continue;
         await this.mergeFile(srcPath, destPath, relPath);
       }
     }

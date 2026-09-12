@@ -12,6 +12,8 @@ import { devicesCommand } from '../src/cli/devices.js';
 import { configCommand } from '../src/cli/config.js';
 import { historyCommand } from '../src/cli/history.js';
 import { restoreCommand } from '../src/cli/restore.js';
+import { onSessionStart } from '../src/hooks/session-start.js';
+import { onSessionEnd } from '../src/hooks/session-end.js';
 import { VERSION } from '../src/index.js';
 
 const program = new Command();
@@ -89,5 +91,28 @@ program
   .description('Restore .claude/ from a snapshot (date or ID)')
   .option('--force', 'Skip confirmation prompt')
   .action(restoreCommand);
+
+// onSessionStart/onSessionEnd (src/hooks/) existed since early versions but were never
+// reachable from the CLI at all - their own doc comments say "claude-sync hook:start"/
+// "claude-sync hook:end", but no such commands were ever registered here, so autoSync's
+// onSessionStart/onSessionEnd config was silently unactionable regardless of setting. Fixed
+// 2026-09-12. Intended for a host's own automation to invoke directly (a shell profile, a cron/
+// systemd timer, or Claude Code's own SessionStart/SessionEnd hooks in settings.json) - this CLI
+// exposes them, it doesn't register itself into anything automatically.
+program
+  .command('hook:start')
+  .description('Pull latest changes - for use as a SessionStart hook (shell profile, Claude Code settings.json, etc.)')
+  .action(async () => {
+    const result = await onSessionStart();
+    if (result) console.log(result);
+  });
+
+program
+  .command('hook:end')
+  .description('Push local changes - for use as a SessionEnd hook (shell profile, Claude Code settings.json, etc.)')
+  .action(async () => {
+    const result = await onSessionEnd();
+    if (result) console.log(result);
+  });
 
 program.parse();

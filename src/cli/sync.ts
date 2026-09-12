@@ -20,7 +20,7 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
   const config = await loadConfig();
   if (!config) return;
 
-  const backend = getBackend(config.backend);
+  const backend = getBackend(config.backend, config.selective);
   const claudeDir = path.join(os.homedir(), '.claude');
   const snapshot = new SnapshotManager();
   const registry = new DeviceRegistry();

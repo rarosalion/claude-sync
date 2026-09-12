@@ -8,6 +8,7 @@
 import * as path from 'node:path';
 import type { FSWatcher } from 'chokidar';
 import type { SyncBackend, SelectiveSyncConfig } from '../types.js';
+import { shouldSyncPath } from './selective.js';
 
 export type WatcherCallback = (changedFiles: string[]) => Promise<void>;
 
@@ -123,23 +124,7 @@ export class FileWatcher {
   }
 
   private shouldSync(relativePath: string): boolean {
-    if (this.selectiveConfig.mode === 'all') {
-      // Check excludes only
-      return !this.selectiveConfig.exclude.some((pattern) =>
-        this.matchGlob(relativePath, pattern)
-      );
-    }
-
-    // Selective mode: must match at least one include pattern
-    const included = this.selectiveConfig.include.some((pattern) =>
-      this.matchGlob(relativePath, pattern)
-    );
-
-    const excluded = this.selectiveConfig.exclude.some((pattern) =>
-      this.matchGlob(relativePath, pattern)
-    );
-
-    return included && !excluded;
+    return shouldSyncPath(relativePath, this.selectiveConfig);
   }
 
   private buildIgnorePatterns(): string[] {
@@ -157,16 +142,6 @@ export class FileWatcher {
     return ignored;
   }
 
-  private matchGlob(filePath: string, pattern: string): boolean {
-    // Simple glob matching
-    const normalized = filePath.replace(/\\/g, '/');
-    const regexStr = pattern
-      .replace(/\*\*/g, '{{GLOBSTAR}}')
-      .replace(/\*/g, '[^/]*')
-      .replace(/{{GLOBSTAR}}/g, '.*');
-
-    return new RegExp(regexStr).test(normalized);
-  }
 }
 
 /**
