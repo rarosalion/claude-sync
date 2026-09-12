@@ -42,4 +42,6 @@ export { SyncthingBackend } from './backends/syncthing.js';
 export { RsyncBackend } from './backends/rsync.js';
 export { CustomBackend } from './backends/custom.js';
 
-export const VERSION = '0.2.0';
+// Keep in sync with package.json's "version" - this is a separate literal, not derived from it
+// (found drifted from package.json's 0.1.0 while fixing selective sync/hooks, 2026-09-12).
+export const VERSION = '0.3.0';
