@@ -1,6 +1,6 @@
 {
   "name": "claude-sync",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Sync your Claude Code .claude/ directory across all your devices. One brain, everywhere.",
   "keywords": [
     "claude",
@@ -37,6 +37,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "postbuild": "chmod +x dist/bin/claude-sync.js",
     "dev": "tsc --watch",
     "start": "node dist/bin/claude-sync.js",
     "test": "vitest run",
