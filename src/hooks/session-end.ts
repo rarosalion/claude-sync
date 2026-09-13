@@ -11,11 +11,10 @@
 
 import * as os from 'node:os';
 import * as path from 'node:path';
-import * as fs from 'node:fs/promises';
-import { CONFIG_DIR, SYNC_LOCK_FILE } from '../types.js';
 import { loadConfig, getBackend } from '../cli/helpers.js';
 import { DeviceRegistry } from '../core/device-registry.js';
 import { SnapshotManager } from '../core/snapshot.js';
+import { withSyncLock, ALREADY_SYNCING } from '../core/sync-lock.js';
 
 /**
  * Run the session-end sync (push)
@@ -26,69 +25,50 @@ export async function onSessionEnd(): Promise<string> {
   if (!config) return '';
   if (!config.autoSync.onSessionEnd) return '';
 
-  // Check for lock file
-  const lockFile = path.join(os.homedir(), CONFIG_DIR, SYNC_LOCK_FILE);
-  if (await fileExists(lockFile)) {
+  const result = await withSyncLock(async () => {
+    try {
+      const claudeDir = path.join(os.homedir(), '.claude');
+      const backend = getBackend(config.backend, config.selective);
+
+      // Create a snapshot before pushing (for history)
+      const snapshots = new SnapshotManager();
+      try {
+        await snapshots.create(claudeDir, config.deviceId, config.deviceName, 'session-end snapshot');
+      } catch {
+        // Non-fatal
+      }
+
+      // Push local changes
+      const pushResult = await backend.push(claudeDir);
+
+      // Update device registry
+      const registry = new DeviceRegistry();
+      await registry.updateLastSync(config.deviceId);
+
+      // Auto-prune old snapshots (keep last 50)
+      try {
+        await snapshots.prune(50);
+      } catch {
+        // Non-fatal
+      }
+
+      if (!pushResult.success) {
+        return `[claude-sync] Push failed: ${pushResult.error}`;
+      }
+
+      if (pushResult.filesChanged.length === 0) {
+        return '[claude-sync] No changes to push';
+      }
+
+      return `[claude-sync] Pushed ${pushResult.filesChanged.length} change(s)`;
+    } catch (err) {
+      return `[claude-sync] Error: ${(err as Error).message}`;
+    }
+  });
+
+  if (result === ALREADY_SYNCING) {
     return '[claude-sync] Another sync is in progress';
   }
 
-  try {
-    // Create lock
-    await fs.writeFile(lockFile, `${process.pid}`, 'utf-8');
-
-    const claudeDir = path.join(os.homedir(), '.claude');
-    const backend = getBackend(config.backend, config.selective);
-
-    // Create a snapshot before pushing (for history)
-    const snapshots = new SnapshotManager();
-    try {
-      await snapshots.create(claudeDir, config.deviceId, config.deviceName, 'session-end snapshot');
-    } catch {
-      // Non-fatal
-    }
-
-    // Push local changes
-    const result = await backend.push(claudeDir);
-
-    // Update device registry
-    const registry = new DeviceRegistry();
-    await registry.updateLastSync(config.deviceId);
-
-    // Auto-prune old snapshots (keep last 50)
-    try {
-      await snapshots.prune(50);
-    } catch {
-      // Non-fatal
-    }
-
-    if (!result.success) {
-      return `[claude-sync] Push failed: ${result.error}`;
-    }
-
-    if (result.filesChanged.length === 0) {
-      return '[claude-sync] No changes to push';
-    }
-
-    return `[claude-sync] Pushed ${result.filesChanged.length} change(s)`;
-  } catch (err) {
-    return `[claude-sync] Error: ${(err as Error).message}`;
-  } finally {
-    // Release lock
-    try {
-      await fs.unlink(lockFile);
-    } catch {
-      // Ignore
-    }
-  }
-}
-
-// ── Helpers ──────────────────────────────────────────────────
-
-async function fileExists(p: string): Promise<boolean> {
-  try {
-    await fs.access(p);
-    return true;
-  } catch {
-    return false;
-  }
+  return result;
 }

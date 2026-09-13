@@ -8,6 +8,7 @@ import chalk from 'chalk';
 import { loadConfig, getBackend } from './helpers.js';
 import { SnapshotManager } from '../core/snapshot.js';
 import { DeviceRegistry } from '../core/device-registry.js';
+import { withSyncLock, ALREADY_SYNCING } from '../core/sync-lock.js';
 
 interface SyncOptions {
   push?: boolean;
@@ -20,6 +21,17 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
   const config = await loadConfig();
   if (!config) return;
 
+  const result = await withSyncLock(() => runSync(options, config));
+
+  if (result === ALREADY_SYNCING) {
+    console.log(chalk.yellow('  Another sync is already in progress.'));
+  }
+}
+
+async function runSync(
+  options: SyncOptions,
+  config: NonNullable<Awaited<ReturnType<typeof loadConfig>>>
+): Promise<void> {
   const backend = getBackend(config.backend, config.selective);
   const claudeDir = path.join(os.homedir(), '.claude');
   const snapshot = new SnapshotManager();
