@@ -12,7 +12,17 @@ import { describe, it, expect, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { withSyncLock, ALREADY_SYNCING } from '../src/core/sync-lock.js';
+
+/** A pid guaranteed not to belong to any running process: spawn a process and wait for its exit. */
+function deadPid(): number {
+  const result = spawnSync(process.execPath, ['-e', 'process.exit(0)']);
+  if (result.pid === undefined) {
+    throw new Error('failed to spawn helper process for deadPid()');
+  }
+  return result.pid;
+}
 
 describe('withSyncLock', () => {
   let lockFile: string;
@@ -60,7 +70,8 @@ describe('withSyncLock', () => {
   it('returns ALREADY_SYNCING and does not call fn when the lock is already held', async () => {
     lockFile = await newLockFile();
     await fs.mkdir(path.dirname(lockFile), { recursive: true });
-    await fs.writeFile(lockFile, '99999', 'utf-8');
+    // Our own pid, right now: alive and fresh, so this must be honored as a real, in-progress lock.
+    await fs.writeFile(lockFile, JSON.stringify({ pid: process.pid, timestamp: Date.now() }), 'utf-8');
 
     let called = false;
     const result = await withSyncLock(async () => {
@@ -70,6 +81,50 @@ describe('withSyncLock', () => {
 
     expect(result).toBe(ALREADY_SYNCING);
     expect(called).toBe(false);
+  });
+
+  it('reclaims a lock left by a dead pid and runs fn', async () => {
+    lockFile = await newLockFile();
+    await fs.mkdir(path.dirname(lockFile), { recursive: true });
+    await fs.writeFile(lockFile, JSON.stringify({ pid: deadPid(), timestamp: Date.now() }), 'utf-8');
+
+    const result = await withSyncLock(async () => 'reclaimed', lockFile);
+
+    expect(result).toBe('reclaimed');
+  });
+
+  it('reclaims a lock older than the staleness threshold even if the pid is alive', async () => {
+    lockFile = await newLockFile();
+    await fs.mkdir(path.dirname(lockFile), { recursive: true });
+    // Our own pid is alive, but the timestamp is far older than the 10-minute threshold.
+    const staleTimestamp = Date.now() - 60 * 60 * 1000;
+    await fs.writeFile(lockFile, JSON.stringify({ pid: process.pid, timestamp: staleTimestamp }), 'utf-8');
+
+    const result = await withSyncLock(async () => 'reclaimed', lockFile);
+
+    expect(result).toBe('reclaimed');
+  });
+
+  it('reclaims an unparseable lock file', async () => {
+    lockFile = await newLockFile();
+    await fs.mkdir(path.dirname(lockFile), { recursive: true });
+    await fs.writeFile(lockFile, 'not json', 'utf-8');
+
+    const result = await withSyncLock(async () => 'reclaimed', lockFile);
+
+    expect(result).toBe('reclaimed');
+  });
+
+  it('does not reclaim a fresh lock held by a live pid, and leaves it in place', async () => {
+    lockFile = await newLockFile();
+    await fs.mkdir(path.dirname(lockFile), { recursive: true });
+    const contents = JSON.stringify({ pid: process.pid, timestamp: Date.now() });
+    await fs.writeFile(lockFile, contents, 'utf-8');
+
+    const result = await withSyncLock(async () => 'should not run', lockFile);
+
+    expect(result).toBe(ALREADY_SYNCING);
+    expect(await fs.readFile(lockFile, 'utf-8')).toBe(contents);
   });
 
   it('two overlapping syncs: only one actually runs, the other is told to back off', async () => {
