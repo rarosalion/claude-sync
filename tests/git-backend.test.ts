@@ -1,10 +1,16 @@
 /**
  * Tests for the git sync backend's pull() — specifically that it merges a
  * live local edit instead of blindly overwriting it with whatever the repo
- * mirror last had. This is the MEMORY.md-clobbering regression: pull() used
+ * mirror last had. This is the memory-file-clobbering regression: pull() used
  * to copyTree() the repo mirror straight over the live .claude/ directory
  * with no comparison at all, discarding any local edit made since the last
  * push. Uses local bare repos as the "remote" - no network required.
+ *
+ * Individual memory files (feedback_*.md, project_*.md, etc.) stay on
+ * merge-append specifically so this can never happen to them. MEMORY.md
+ * itself is a deliberate exception - it's a low-stakes index of one-line
+ * pointers, carved out to latest-wins so a cleanup edit actually sticks - see
+ * the last test below for that accepted tradeoff made explicit.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -72,26 +78,30 @@ describe('GitBackend pull()', () => {
     const deviceA = await makeDevice('a');
     const deviceB = await makeDevice('b');
 
+    // A real content file, not MEMORY.md itself - that filename is a deliberate latest-wins
+    // exception, covered separately below.
+    const memoryFile = path.join('memory', 'feedback-something.md');
+
     // Device A writes an initial memory entry and pushes it.
     await fs.mkdir(path.join(deviceA.liveDir, 'memory'), { recursive: true });
-    await fs.writeFile(path.join(deviceA.liveDir, 'memory', 'MEMORY.md'), '- entry from device A\n');
+    await fs.writeFile(path.join(deviceA.liveDir, memoryFile), '- entry from device A\n');
     expect((await deviceA.backend.push(deviceA.liveDir)).success).toBe(true);
 
     // Device B pulls it down.
     expect((await deviceB.backend.pull(deviceB.liveDir)).success).toBe(true);
-    const afterFirstPull = await fs.readFile(path.join(deviceB.liveDir, 'memory', 'MEMORY.md'), 'utf-8');
+    const afterFirstPull = await fs.readFile(path.join(deviceB.liveDir, memoryFile), 'utf-8');
     expect(afterFirstPull).toContain('entry from device A');
 
     // Device B makes a live local edit - not pushed yet, exactly like a
     // Claude session writing a memory file mid-conversation.
     await fs.writeFile(
-      path.join(deviceB.liveDir, 'memory', 'MEMORY.md'),
+      path.join(deviceB.liveDir, memoryFile),
       afterFirstPull + '- entry from device B (not yet pushed)\n'
     );
 
     // Meanwhile, device A adds a second entry and pushes.
     await fs.writeFile(
-      path.join(deviceA.liveDir, 'memory', 'MEMORY.md'),
+      path.join(deviceA.liveDir, memoryFile),
       '- entry from device A\n- second entry from device A\n'
     );
     expect((await deviceA.backend.push(deviceA.liveDir)).success).toBe(true);
@@ -100,10 +110,36 @@ describe('GitBackend pull()', () => {
     // B's unpushed edit with whatever device A last pushed, losing it.
     expect((await deviceB.backend.pull(deviceB.liveDir)).success).toBe(true);
 
-    const final = await fs.readFile(path.join(deviceB.liveDir, 'memory', 'MEMORY.md'), 'utf-8');
+    const final = await fs.readFile(path.join(deviceB.liveDir, memoryFile), 'utf-8');
     expect(final).toContain('entry from device A');
     expect(final).toContain('second entry from device A');
     expect(final).toContain('entry from device B (not yet pushed)');
+  });
+
+  it('MEMORY.md itself uses latest-wins, not merge-append (accepted tradeoff)', async () => {
+    const deviceA = await makeDevice('a');
+    const deviceB = await makeDevice('b');
+    const indexFile = path.join('memory', 'MEMORY.md');
+
+    await fs.mkdir(path.join(deviceA.liveDir, 'memory'), { recursive: true });
+    await fs.writeFile(path.join(deviceA.liveDir, indexFile), '- entry A\n');
+    expect((await deviceA.backend.push(deviceA.liveDir)).success).toBe(true);
+    expect((await deviceB.backend.pull(deviceB.liveDir)).success).toBe(true);
+
+    // Device B makes an unpushed edit to the index...
+    await fs.writeFile(path.join(deviceB.liveDir, indexFile), '- entry A\n- entry B (not yet pushed)\n');
+
+    // ...meanwhile device A pushes a newer version with no knowledge of B's edit.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await fs.writeFile(path.join(deviceA.liveDir, indexFile), '- entry A\n- entry A2\n');
+    expect((await deviceA.backend.push(deviceA.liveDir)).success).toBe(true);
+
+    expect((await deviceB.backend.pull(deviceB.liveDir)).success).toBe(true);
+
+    // Unlike the content-file case above, B's unpushed index edit is allowed to be lost here -
+    // MEMORY.md only ever holds pointers to the real content, which stays protected.
+    const final = await fs.readFile(path.join(deviceB.liveDir, indexFile), 'utf-8');
+    expect(final).toContain('entry A2');
   });
 
   it('copies a brand new remote file straight through when nothing exists locally yet', async () => {

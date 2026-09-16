@@ -24,9 +24,24 @@ describe('Merger', () => {
   // ── Strategy Detection ────────────────────────────────────
 
   describe('getStrategy', () => {
-    it('returns merge-append for memory files', () => {
-      expect(merger.getStrategy('memory/MEMORY.md')).toBe('merge-append');
+    it('returns latest-wins for MEMORY.md specifically', () => {
+      // MEMORY.md is a flat index of one-line pointers, not the actual content - latest-wins lets
+      // a cleanup edit (e.g. removing a stale/duplicate line) actually stick.
+      expect(merger.getStrategy('memory/MEMORY.md')).toBe('latest-wins');
+      expect(merger.getStrategy('projects/myapp/memory/MEMORY.md')).toBe('latest-wins');
+    });
+
+    it('returns merge-append for individual memory files (not MEMORY.md itself)', () => {
+      // These hold the actual content and get corrected/rewritten in place - merge-append is kept
+      // here (rather than latest-wins) specifically so an unpushed local edit can never be
+      // silently discarded by a concurrent push from another device (regression: commit ad143e6 /
+      // tests/git-backend.test.ts).
+      expect(merger.getStrategy('memory/feedback-something.md')).toBe('merge-append');
       expect(merger.getStrategy('projects/myapp/memory/notes.md')).toBe('merge-append');
+    });
+
+    it('returns merge-append for non-memory project files', () => {
+      expect(merger.getStrategy('projects/myapp/notes.md')).toBe('merge-append');
     });
 
     it('returns merge-chrono for activity logs', () => {
@@ -75,21 +90,24 @@ describe('Merger', () => {
   // ── Merge: Append Strategy ────────────────────────────────
 
   describe('merge — merge-append', () => {
+    // Uses a projects/ path (not memory/) so the strategy resolved is actually merge-append -
+    // memory/** now resolves to latest-wins (see getStrategy tests above). These tests exercise
+    // the merge-append algorithm itself, which other file categories (e.g. projects/**) still use.
     it('appends unique lines from both files', async () => {
       const localFile = path.join(tmpDir, 'local.md');
       const remoteFile = path.join(tmpDir, 'remote.md');
 
-      await fs.writeFile(localFile, '# Memory\nLine A\nLine B\n');
-      await fs.writeFile(remoteFile, '# Memory\nLine B\nLine C\n');
+      await fs.writeFile(localFile, '# Notes\nLine A\nLine B\n');
+      await fs.writeFile(remoteFile, '# Notes\nLine B\nLine C\n');
 
-      const result = await merger.merge(localFile, remoteFile, 'memory/test.md');
+      const result = await merger.merge(localFile, remoteFile, 'projects/myapp/notes.md');
 
       expect(result.conflict.resolved).toBe(true);
       expect(result.conflict.resolution).toBe('merged-append');
       expect(result.content).toContain('Line A');
       expect(result.content).toContain('Line B');
       expect(result.content).toContain('Line C');
-      expect(result.content).toContain('# Memory');
+      expect(result.content).toContain('# Notes');
     });
 
     it('deduplicates identical lines', async () => {
@@ -103,7 +121,7 @@ describe('Merger', () => {
       // ensuring dedup when content is different. Let's make them actually differ:
       await fs.writeFile(remoteFile, 'Line A\nLine C\n');
 
-      const result = await merger.merge(localFile, remoteFile, 'memory/test.md');
+      const result = await merger.merge(localFile, remoteFile, 'projects/myapp/notes.md');
 
       const lines = result.content.split('\n').filter(l => l.trim() !== '');
       const lineACount = lines.filter(l => l.trim() === 'Line A').length;
@@ -126,7 +144,7 @@ describe('Merger', () => {
         '---\nname: test\nmodified: 2025-01-02\n---\n\nbody text\n'
       );
 
-      const result = await merger.merge(localFile, remoteFile, 'memory/test.md');
+      const result = await merger.merge(localFile, remoteFile, 'projects/myapp/notes.md');
 
       const dashCount = result.content.split('\n').filter(l => l.trim() === '---').length;
       expect(dashCount).toBe(2); // Both delimiters survive - the file is still valid frontmatter.
@@ -141,13 +159,33 @@ describe('Merger', () => {
       await fs.writeFile(localFile, '---\nLine A\n---\n');
       await fs.writeFile(remoteFile, '---\nLine A\n---\n');
 
-      const result = await merger.merge(localFile, remoteFile, 'memory/test.md');
+      const result = await merger.merge(localFile, remoteFile, 'projects/myapp/notes.md');
 
       // Identical content end to end - the "identical content" fast path
       // should apply, not even reach mergeAppend, but assert the outcome
       // either way: no tripling/quadrupling of the shared lines.
       const dashCount = result.content.split('\n').filter(l => l.trim() === '---').length;
       expect(dashCount).toBe(2);
+    });
+
+    it('does not let blank lines accumulate across repeated merges (regression, was Math.random hash)', async () => {
+      const localFile = path.join(tmpDir, 'local.md');
+      const remoteFile = path.join(tmpDir, 'remote.md');
+
+      await fs.writeFile(localFile, 'Line A\n\nLine B\n');
+      await fs.writeFile(remoteFile, 'Line A\n\n\nLine C\n');
+
+      let result = await merger.merge(localFile, remoteFile, 'projects/myapp/notes.md');
+      // Re-merge the result against the same remote a few more times, simulating repeated
+      // syncs - a fixed line count means blank lines are being deduplicated by occurrence
+      // count like any other line, not treated as always-new.
+      for (let i = 0; i < 5; i++) {
+        await fs.writeFile(localFile, result.content);
+        result = await merger.merge(localFile, remoteFile, 'projects/myapp/notes.md');
+      }
+
+      const blankLineCount = result.content.split('\n').filter(l => l.trim() === '').length;
+      expect(blankLineCount).toBeLessThanOrEqual(3);
     });
   });
 

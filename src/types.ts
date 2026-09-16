@@ -205,8 +205,20 @@ export interface CloudStoragePath {
 // ── Default Configuration ───────────────────────────────────────────
 
 export const DEFAULT_MERGE_RULES: MergeRule[] = [
+  // MEMORY.md is a flat index of one-line pointers, not the actual content - latest-wins lets an
+  // edit that removes a stale/duplicate line actually stick, and the failure mode if it ever
+  // clobbers a concurrent addition is low-severity (a missing index line, not lost content - the
+  // real memory below it is untouched and can be re-indexed). This rule must come before
+  // **/memory/** below since MEMORY.md's own path also matches that broader pattern.
+  { pattern: '**/MEMORY.md', strategy: 'latest-wins' },
+  // Individual memory files hold the actual content and get corrected/rewritten in place, not just
+  // appended to. Keep merge-append here specifically so an unpushed local edit (e.g. mid-session)
+  // can never be silently discarded by a concurrent push from another device - see commit ad143e6
+  // and tests/git-backend.test.ts, which fixed exactly that data-loss bug once already. The
+  // tradeoff: merge-append can't represent a deletion, so a superseded paragraph can occasionally
+  // resurface after an edit until the remote copy also converges - a self-correcting nuisance, not
+  // silent data loss.
   { pattern: '**/memory/**', strategy: 'merge-append' },
-  { pattern: '**/MEMORY.md', strategy: 'merge-append' },
   { pattern: '**/activity-log*', strategy: 'merge-chrono' },
   { pattern: '**/settings*', strategy: 'latest-wins' },
   { pattern: '**/skills/**', strategy: 'latest-wins' },

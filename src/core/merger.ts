@@ -298,11 +298,18 @@ export class Merger {
   }
 
   /**
-   * Hash a line for deduplication (ignores leading/trailing whitespace)
+   * Hash a line for deduplication (ignores leading/trailing whitespace).
+   *
+   * Blank lines hash to the same value as every other blank line (md5 of the empty string), so
+   * they're subject to the same count-based dedup as any other repeated line - a file with two
+   * blank lines locally and three remotely gets exactly one appended, not an ever-growing pile.
+   * A previous version special-cased blank lines with `Math.random()`, making every blank line
+   * "unique" so none of them ever matched anything - remote's blank lines were always treated as
+   * new and appended without limit, which is how memory files ended up with millions of blank
+   * lines after repeated syncs.
    */
   private lineHash(line: string): string {
     const trimmed = line.trim();
-    if (trimmed === '') return `__empty_${Math.random()}__`;
     return crypto.createHash('md5').update(trimmed).digest('hex');
   }
 }
