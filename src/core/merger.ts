@@ -41,11 +41,19 @@ export class Merger {
   /**
    * Merge two versions of a file based on the configured strategy
    * Returns the merged content as a string
+   *
+   * getBase, when a backend can supply it, returns the file's content as of this device's last
+   * sync (null if it didn't exist then). It's only called when local and remote differ. With a
+   * base, a side that still matches it hasn't changed, so the other side's version wins outright
+   * and the strategy below only runs when both sides really changed. Without one, every
+   * difference goes to the strategy, which for merge-append means a deleted or reworded line is
+   * re-appended from the other side.
    */
   async merge(
     localPath: string,
     remotePath: string,
-    relativePath: string
+    relativePath: string,
+    getBase?: () => Promise<string | null>
   ): Promise<{ content: string; conflict: ConflictInfo }> {
     const strategy = this.getStrategy(relativePath);
     const [localContent, remoteContent] = await Promise.all([
@@ -71,6 +79,20 @@ export class Merger {
       conflict.resolved = true;
       conflict.resolution = 'identical';
       return { content: localContent, conflict };
+    }
+
+    const baseContent = getBase ? await getBase() : null;
+    if (baseContent !== null) {
+      if (localContent === baseContent) {
+        conflict.resolved = true;
+        conflict.resolution = 'remote-only-change';
+        return { content: remoteContent, conflict };
+      }
+      if (remoteContent === baseContent) {
+        conflict.resolved = true;
+        conflict.resolution = 'local-only-change';
+        return { content: localContent, conflict };
+      }
     }
 
     let merged: string;

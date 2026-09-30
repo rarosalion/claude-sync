@@ -111,6 +111,8 @@ When two devices edit the same file, claude-sync knows what to do:
 | Skills | Latest Version | Most recently modified version wins |
 | CLAUDE.md | Ask User | Shows diff, lets you choose |
 
+With the git backend, these strategies only apply when both devices changed the same file since they last synced. A file changed on only one device takes that device's version as-is, so edits that remove or reword lines propagate too.
+
 ### Selective Sync
 
 Don't want to sync everything? Pick what matters:
