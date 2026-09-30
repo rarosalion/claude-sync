@@ -90,9 +90,8 @@ describe('Merger', () => {
   // ── Merge: Append Strategy ────────────────────────────────
 
   describe('merge — merge-append', () => {
-    // Uses a projects/ path (not memory/) so the strategy resolved is actually merge-append -
-    // memory/** now resolves to latest-wins (see getStrategy tests above). These tests exercise
-    // the merge-append algorithm itself, which other file categories (e.g. projects/**) still use.
+    // These exercise the merge-append algorithm itself, which memory files and other projects/**
+    // files use (see the getStrategy tests above). Only MEMORY.md is latest-wins.
     it('appends unique lines from both files', async () => {
       const localFile = path.join(tmpDir, 'local.md');
       const remoteFile = path.join(tmpDir, 'remote.md');
@@ -241,6 +240,75 @@ describe('Merger', () => {
 
       expect(result.conflict.resolved).toBe(false);
       expect(result.conflict.resolution).toBe('needs-user-input');
+    });
+  });
+
+  describe('merge — with a base version (three-way)', () => {
+    const memoryPath = 'projects/myapp/memory/feedback-something.md';
+
+    async function writePair(local: string, remote: string): Promise<[string, string]> {
+      const localFile = path.join(tmpDir, 'local.md');
+      const remoteFile = path.join(tmpDir, 'remote.md');
+      await fs.writeFile(localFile, local);
+      await fs.writeFile(remoteFile, remote);
+      return [localFile, remoteFile];
+    }
+
+    it('takes the remote version when local still matches the base, so deletions propagate', async () => {
+      const [localFile, remoteFile] = await writePair('keep\nstale\n', 'keep\n');
+
+      const result = await merger.merge(localFile, remoteFile, memoryPath, async () => 'keep\nstale\n');
+
+      expect(result.content).toBe('keep\n');
+      expect(result.conflict.resolution).toBe('remote-only-change');
+    });
+
+    it('keeps the local version when remote still matches the base', async () => {
+      const [localFile, remoteFile] = await writePair('keep\nreworded\n', 'keep\noriginal\n');
+
+      const result = await merger.merge(localFile, remoteFile, memoryPath, async () => 'keep\noriginal\n');
+
+      expect(result.content).toBe('keep\nreworded\n');
+      expect(result.conflict.resolution).toBe('local-only-change');
+    });
+
+    it('falls back to the configured strategy when both sides changed', async () => {
+      const [localFile, remoteFile] = await writePair('base\nfrom local\n', 'base\nfrom remote\n');
+
+      const result = await merger.merge(localFile, remoteFile, memoryPath, async () => 'base\n');
+
+      expect(result.conflict.resolution).toBe('merged-append');
+      expect(result.content).toContain('from local');
+      expect(result.content).toContain('from remote');
+    });
+
+    it('falls back to the configured strategy when the file had no base version', async () => {
+      const [localFile, remoteFile] = await writePair('a\n', 'b\n');
+
+      const result = await merger.merge(localFile, remoteFile, memoryPath, async () => null);
+
+      expect(result.conflict.resolution).toBe('merged-append');
+    });
+
+    it('lets a one-sided CLAUDE.md edit through instead of asking', async () => {
+      const [localFile, remoteFile] = await writePair('# Rules\n', '# Rules\n- new rule\n');
+
+      const result = await merger.merge(localFile, remoteFile, 'CLAUDE.md', async () => '# Rules\n');
+
+      expect(result.conflict.resolved).toBe(true);
+      expect(result.content).toBe('# Rules\n- new rule\n');
+    });
+
+    it('does not read the base when both sides are identical', async () => {
+      const [localFile, remoteFile] = await writePair('same\n', 'same\n');
+      let baseReads = 0;
+
+      await merger.merge(localFile, remoteFile, memoryPath, async () => {
+        baseReads++;
+        return 'other\n';
+      });
+
+      expect(baseReads).toBe(0);
     });
   });
 

@@ -174,4 +174,97 @@ describe('GitBackend pull()', () => {
     const content = await fs.readFile(path.join(deviceB.liveDir, 'settings.json'), 'utf-8');
     expect(content).toBe('{"theme":"light"}');
   });
+
+  // ── Convergence: pull merges against the last-synced version (three-way) ──
+  //
+  // A plain two-way merge can't tell "the other device added this line" from "this device deleted
+  // it", so merge-append used to re-add every deleted or rewritten line, and each device kept its
+  // own line order. Push overwrites the repo with the local copy, so two devices holding the same
+  // lines in different orders swapped them back and forth on every sync, forever. These tests run
+  // full sync cycles (pull, then push, as `claude-sync sync` does) and require byte-identical
+  // copies that stop producing commits.
+
+  async function sync(device: Device): Promise<void> {
+    expect((await device.backend.pull(device.liveDir)).success).toBe(true);
+    expect((await device.backend.push(device.liveDir)).success).toBe(true);
+  }
+
+  async function commitCount(device: Device): Promise<number> {
+    const { stdout } = await execFileAsync('git', ['-C', device.repoDir, 'rev-list', '--count', 'HEAD']);
+    return parseInt(stdout.trim(), 10);
+  }
+
+  it('propagates a rewritten or deleted line in a memory file to the other device', async () => {
+    const deviceA = await makeDevice('a');
+    const deviceB = await makeDevice('b');
+    const memoryFile = path.join('memory', 'feedback-something.md');
+
+    await fs.mkdir(path.join(deviceA.liveDir, 'memory'), { recursive: true });
+    await fs.writeFile(path.join(deviceA.liveDir, memoryFile), 'keep this\nold wording\nstale line\n');
+    await sync(deviceA);
+    await sync(deviceB);
+
+    // Device A corrects the memory in place: one line reworded, one removed.
+    const corrected = 'keep this\nnew wording\n';
+    await fs.writeFile(path.join(deviceA.liveDir, memoryFile), corrected);
+
+    for (let round = 0; round < 3; round++) {
+      await sync(deviceA);
+      await sync(deviceB);
+    }
+
+    expect(await fs.readFile(path.join(deviceA.liveDir, memoryFile), 'utf-8')).toBe(corrected);
+    expect(await fs.readFile(path.join(deviceB.liveDir, memoryFile), 'utf-8')).toBe(corrected);
+  });
+
+  it('converges after concurrent edits to the same memory file, and then stops committing', async () => {
+    const deviceA = await makeDevice('a');
+    const deviceB = await makeDevice('b');
+    const memoryFile = path.join('memory', 'feedback-something.md');
+
+    await fs.mkdir(path.join(deviceA.liveDir, 'memory'), { recursive: true });
+    await fs.writeFile(path.join(deviceA.liveDir, memoryFile), 'shared line\n');
+    await sync(deviceA);
+    await sync(deviceB);
+
+    // Both devices edit the same file before either syncs, so the configured merge-append
+    // strategy has to combine them. Neither side's addition may be lost.
+    await fs.writeFile(path.join(deviceA.liveDir, memoryFile), 'shared line\nfrom A\n');
+    await fs.writeFile(path.join(deviceB.liveDir, memoryFile), 'shared line\nfrom B\n');
+
+    for (let round = 0; round < 3; round++) {
+      await sync(deviceA);
+      await sync(deviceB);
+    }
+
+    const contentA = await fs.readFile(path.join(deviceA.liveDir, memoryFile), 'utf-8');
+    const contentB = await fs.readFile(path.join(deviceB.liveDir, memoryFile), 'utf-8');
+    expect(contentA).toContain('from A');
+    expect(contentA).toContain('from B');
+    expect(contentB).toBe(contentA);
+
+    // Once converged, further syncs must be no-ops rather than swapping line orders.
+    const before = await commitCount(deviceA);
+    await sync(deviceA);
+    await sync(deviceB);
+    await sync(deviceA);
+    expect(await commitCount(deviceA)).toBe(before);
+  });
+
+  it('lets a CLAUDE.md edit from another device through when this device has not changed it', async () => {
+    const deviceA = await makeDevice('a');
+    const deviceB = await makeDevice('b');
+
+    await fs.writeFile(path.join(deviceA.liveDir, 'CLAUDE.md'), '# Rules\n- one\n');
+    await sync(deviceA);
+    await sync(deviceB);
+
+    // ask-user can't resolve a real conflict unattended, but an edit made on only one device isn't
+    // a conflict. It used to be kept out forever because the two copies simply differed.
+    await fs.writeFile(path.join(deviceA.liveDir, 'CLAUDE.md'), '# Rules\n- one\n- two\n');
+    await sync(deviceA);
+    await sync(deviceB);
+
+    expect(await fs.readFile(path.join(deviceB.liveDir, 'CLAUDE.md'), 'utf-8')).toBe('# Rules\n- one\n- two\n');
+  });
 });

@@ -65,7 +65,7 @@ rm ~/.claude-sync/.claude-sync.lock
 
 ### Conflicts in CLAUDE.md
 
-CLAUDE.md conflicts use the "ask-user" strategy and cannot be auto-resolved. The file stays at its local version. To resolve:
+CLAUDE.md conflicts use the "ask-user" strategy and cannot be auto-resolved. With the git backend this only happens when both devices changed CLAUDE.md since they last synced. An edit made on one device syncs normally. When there is a conflict, the file stays at its local version. To resolve:
 
 1. Run `claude-sync sync --pull`
 2. Check the conflict message

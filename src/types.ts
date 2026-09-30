@@ -214,10 +214,12 @@ export const DEFAULT_MERGE_RULES: MergeRule[] = [
   // Individual memory files hold the actual content and get corrected/rewritten in place, not just
   // appended to. Keep merge-append here specifically so an unpushed local edit (e.g. mid-session)
   // can never be silently discarded by a concurrent push from another device - see commit ad143e6
-  // and tests/git-backend.test.ts, which fixed exactly that data-loss bug once already. The
-  // tradeoff: merge-append can't represent a deletion, so a superseded paragraph can occasionally
-  // resurface after an edit until the remote copy also converges - a self-correcting nuisance, not
-  // silent data loss.
+  // and tests/git-backend.test.ts, which fixed exactly that data-loss bug once already.
+  // merge-append can't represent a deletion on its own. The git backend handles that by passing
+  // each file's last-synced version as a base: if only one device changed the file, that version
+  // wins as-is, so rewrites and deletions propagate, and merge-append only runs when both devices
+  // changed it. Backends that can't supply a base still re-append deleted lines, and two devices
+  // can then keep swapping line orders instead of converging.
   { pattern: '**/memory/**', strategy: 'merge-append' },
   { pattern: '**/activity-log*', strategy: 'merge-chrono' },
   { pattern: '**/settings*', strategy: 'latest-wins' },

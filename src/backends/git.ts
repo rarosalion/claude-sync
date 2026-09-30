@@ -151,6 +151,10 @@ export class GitBackend implements SyncBackend {
     try {
       const filesChanged: string[] = [];
 
+      // Every sync ends with push() committing this device's live files, so HEAD before merging
+      // is what this device had after its last sync: the base for a three-way merge per file.
+      const baseRev = await this.headRev();
+
       if (this.remoteUrl) {
         // Fetch and check for changes
         await this.git('fetch', 'origin', this.branch);
@@ -187,7 +191,7 @@ export class GitBackend implements SyncBackend {
       }
 
       // Copy repo contents to the target .claude/ directory
-      await this.syncFromRepo(targetPath);
+      await this.syncFromRepo(targetPath, baseRev);
 
       return {
         success: true,
@@ -291,6 +295,33 @@ export class GitBackend implements SyncBackend {
     return execFileAsync('git', ['-C', this.repoDir, ...args]);
   }
 
+  private async headRev(): Promise<string | null> {
+    try {
+      const { stdout } = await this.gitOutput('rev-parse', '--verify', '--quiet', 'HEAD');
+      return stdout.trim() || null;
+    } catch {
+      // No commits yet, so there's no base to compare against.
+      return null;
+    }
+  }
+
+  /**
+   * A file's content at a given commit, or null if it didn't exist there. relPath is relative to
+   * the repo root with forward slashes, which is what `git show <rev>:<path>` expects.
+   */
+  private async fileAtRev(rev: string, relPath: string): Promise<string | null> {
+    try {
+      const { stdout } = await execFileAsync(
+        'git',
+        ['-C', this.repoDir, 'show', `${rev}:${relPath}`],
+        { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 }
+      );
+      return stdout;
+    } catch {
+      return null;
+    }
+  }
+
   private async isGitRepo(): Promise<boolean> {
     try {
       await fs.access(path.join(this.repoDir, '.git'));
@@ -315,9 +346,12 @@ export class GitBackend implements SyncBackend {
    * written mid-session) with whatever the repo mirror last had. mergeTree
    * runs each file through the Merger's configured strategy (merge-append
    * for memory files, latest-wins for settings, etc.) instead.
+   *
+   * baseRev is the commit this device had before the pull merged anything in. The Merger uses a
+   * file's content there to tell which side actually changed.
    */
-  private async syncFromRepo(targetPath: string): Promise<void> {
-    await this.mergeTree(this.repoDir, targetPath, ['.git', '.gitignore'], '');
+  private async syncFromRepo(targetPath: string, baseRev: string | null): Promise<void> {
+    await this.mergeTree(this.repoDir, targetPath, ['.git', '.gitignore'], '', baseRev);
   }
 
   /**
@@ -373,7 +407,8 @@ export class GitBackend implements SyncBackend {
     source: string,
     target: string,
     exclude: string[],
-    relativeBase: string
+    relativeBase: string,
+    baseRev: string | null
   ): Promise<void> {
     await fs.mkdir(target, { recursive: true });
 
@@ -392,15 +427,20 @@ export class GitBackend implements SyncBackend {
       const relPath = relativeBase ? `${relativeBase}/${entry.name}` : entry.name;
 
       if (entry.isDirectory()) {
-        await this.mergeTree(srcPath, destPath, exclude, relPath);
+        await this.mergeTree(srcPath, destPath, exclude, relPath, baseRev);
       } else if (entry.isFile()) {
         if (!shouldSyncPath(relPath, this.selectiveConfig)) continue;
-        await this.mergeFile(srcPath, destPath, relPath);
+        await this.mergeFile(srcPath, destPath, relPath, baseRev);
       }
     }
   }
 
-  private async mergeFile(srcPath: string, destPath: string, relPath: string): Promise<void> {
+  private async mergeFile(
+    srcPath: string,
+    destPath: string,
+    relPath: string,
+    baseRev: string | null
+  ): Promise<void> {
     let destExists = true;
     try {
       await fs.access(destPath);
@@ -416,7 +456,8 @@ export class GitBackend implements SyncBackend {
     // merger.merge treats its first argument as "local" (this device's
     // current state) and the second as "remote" (what came from the repo
     // mirror) - that maps directly onto destPath/srcPath here.
-    const { content } = await this.merger.merge(destPath, srcPath, relPath);
+    const getBase = baseRev ? () => this.fileAtRev(baseRev, relPath) : undefined;
+    const { content } = await this.merger.merge(destPath, srcPath, relPath, getBase);
     await fs.writeFile(destPath, content, 'utf-8');
   }
 }
