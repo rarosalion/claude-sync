@@ -44,9 +44,6 @@ export const SNAPSHOT_EXCLUDED_TOP_LEVEL: ReadonlySet<string> = new Set([
   'todos',
 ]);
 
-/** Session transcripts under projects/ are large and not synced, so they are skipped too. */
-const EXCLUDED_FILE_SUFFIX = '.jsonl';
-
 export interface RetentionPolicy {
   /** Keep at most this many snapshots. */
   keepCount: number;
@@ -69,11 +66,16 @@ const STALE_MANIFEST_LOCK_MS = 30 * 1000;
 const TMP_PREFIX = '.tmp-';
 const MANIFEST_LOCK = '.manifest.lock';
 
-/** True if `rel` (a path relative to the source root, '/'-separated) is skipped by snapshots. */
-export function isSnapshotExcluded(rel: string, isDirectory: boolean): boolean {
+/**
+ * True if `rel` (a path relative to the source root, '/'-separated) is skipped by snapshots.
+ * Under projects/<project>/ only memory/ is kept: it is the part claude-sync syncs, whereas
+ * everything else there (transcripts, tool results, live per-session files like ccr-tip.json)
+ * is large and changes constantly, which also stopped unchanged-snapshot detection working.
+ */
+export function isSnapshotExcluded(rel: string): boolean {
   const parts = rel.split('/');
   if (SNAPSHOT_EXCLUDED_TOP_LEVEL.has(parts[0])) return true;
-  return !isDirectory && parts[0] === 'projects' && rel.endsWith(EXCLUDED_FILE_SUFFIX);
+  return parts[0] === 'projects' && parts.length >= 3 && parts[2] !== 'memory';
 }
 
 interface Scan {
@@ -306,7 +308,10 @@ export class SnapshotManager {
     }
   }
 
-  /** Walk the snapshot-eligible files, counting them and hashing path+size+mtime. */
+  /**
+   * Walk the snapshot-eligible files, counting them and hashing path and content. Content, not
+   * mtime: a sync rewrites files like CLAUDE.md with identical bytes, which must not count as a change.
+   */
   private async scanDirectory(source: string): Promise<Scan> {
     const hash = crypto.createHash('sha256');
     let fileCount = 0;
@@ -322,16 +327,17 @@ export class SnapshotManager {
       entries.sort((a, b) => a.name.localeCompare(b.name));
       for (const entry of entries) {
         const entryRel = rel ? `${rel}/${entry.name}` : entry.name;
-        if (isSnapshotExcluded(entryRel, entry.isDirectory())) continue;
+        if (isSnapshotExcluded(entryRel)) continue;
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) {
           await walk(full, entryRel);
         } else if (entry.isFile()) {
           try {
-            const stat = await fs.stat(full);
+            const content = await fs.readFile(full);
             fileCount++;
-            sizeBytes += stat.size;
-            hash.update(`${entryRel}\0${stat.size}\0${stat.mtimeMs}\n`);
+            sizeBytes += content.length;
+            hash.update(`${entryRel}\0${content.length}\0`);
+            hash.update(crypto.createHash('sha256').update(content).digest());
           } catch {
             // File vanished mid-scan.
           }
@@ -353,7 +359,7 @@ export class SnapshotManager {
     }
     for (const entry of entries) {
       const entryRel = rel ? `${rel}/${entry.name}` : entry.name;
-      if (isSnapshotExcluded(entryRel, entry.isDirectory())) continue;
+      if (isSnapshotExcluded(entryRel)) continue;
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         await this.clearDirectory(full, entryRel);
@@ -377,7 +383,7 @@ export class SnapshotManager {
 
     for (const entry of entries) {
       const entryRel = rel ? `${rel}/${entry.name}` : entry.name;
-      if (applyExcludes && isSnapshotExcluded(entryRel, entry.isDirectory())) continue;
+      if (applyExcludes && isSnapshotExcluded(entryRel)) continue;
       const srcPath = path.join(source, entry.name);
       const destPath = path.join(target, entry.name);
 

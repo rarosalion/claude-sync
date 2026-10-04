@@ -58,17 +58,22 @@ describe('SnapshotManager', () => {
   });
 
   it('classifies excluded paths', () => {
-    expect(isSnapshotExcluded('plugins', true)).toBe(true);
-    expect(isSnapshotExcluded('plugins/x/y.js', false)).toBe(true);
-    expect(isSnapshotExcluded('projects/p/s.jsonl', false)).toBe(true);
-    expect(isSnapshotExcluded('projects/p/memory/m.md', false)).toBe(false);
-    expect(isSnapshotExcluded('skills/a.md', false)).toBe(false);
-    expect(isSnapshotExcluded('history.jsonl', false)).toBe(false);
+    expect(isSnapshotExcluded('plugins')).toBe(true);
+    expect(isSnapshotExcluded('plugins/x/y.js')).toBe(true);
+    expect(isSnapshotExcluded('projects/p/s.jsonl')).toBe(true);
+    expect(isSnapshotExcluded('projects/p/memory/m.md')).toBe(false);
+    expect(isSnapshotExcluded('projects/p/uuid/tool-results/x.txt')).toBe(true);
+    expect(isSnapshotExcluded('projects/p')).toBe(false);
+    expect(isSnapshotExcluded('skills/a.md')).toBe(false);
+    expect(isSnapshotExcluded('history.jsonl')).toBe(false);
   });
 
   it('reuses the newest snapshot when nothing changed', async () => {
     const mgr = new SnapshotManager(configDir);
     const first = await mgr.create(source, 'dev', 'host', 'one');
+    // Rewriting a file with identical bytes (as a pull does) bumps its mtime but is not a change.
+    const later = new Date(Date.now() + 60_000);
+    await fs.utimes(path.join(source, 'CLAUDE.md'), later, later);
     const second = await mgr.create(source, 'dev', 'host', 'two');
     expect(second.id).toBe(first.id);
     expect(await snapshotDirs()).toHaveLength(1);

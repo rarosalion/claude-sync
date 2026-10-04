@@ -54,6 +54,19 @@ Open an issue describing:
 - Proposed solution
 - Alternatives you've considered
 
+### Commit Messages and Releases
+
+Releases are fully automatic. Every merge to `main` is analysed by [semantic-release](https://semantic-release.gitbook.io) (`.github/workflows/release.yml`), which picks the next version from the commit messages, bumps `package.json`, `package-lock.json` and `VERSION` in `src/index.ts`, updates `CHANGELOG.md`, tags `vX.Y.Z` and publishes a GitHub release. So every commit in a pull request must be a [Conventional Commit](https://www.conventionalcommits.org): `type(optional-scope)!: description`. The `commit-lint` check fails the PR otherwise.
+
+| Type | Effect on the version |
+|---|---|
+| `fix:`, `perf:` | patch (0.3.1 to 0.3.2) |
+| `feat:` | minor (0.3.1 to 0.4.0) |
+| `!` after the type (`feat!:`) or a `BREAKING CHANGE:` footer | major |
+| `docs:`, `test:`, `refactor:`, `build:`, `ci:`, `chore:`, `style:` | no release |
+
+Never edit the version numbers by hand.
+
 ### Pull Requests
 
 1. Fork the repo and create a branch from `main`

@@ -42,6 +42,6 @@ export { SyncthingBackend } from './backends/syncthing.js';
 export { RsyncBackend } from './backends/rsync.js';
 export { CustomBackend } from './backends/custom.js';
 
-// Keep in sync with package.json's "version" - this is a separate literal, not derived from it
-// (found drifted from package.json's 0.1.0 while fixing selective sync/hooks, 2026-09-12).
+// Kept equal to package.json's "version" by the release workflow (.releaserc.json rewrites this
+// line); tests/version.test.ts fails if the two drift. Don't edit it by hand.
 export const VERSION = '0.3.1';
