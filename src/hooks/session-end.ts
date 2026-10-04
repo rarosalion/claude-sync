@@ -9,16 +9,12 @@
  *   claude-sync hook:end
  */
 
+import { getBackend, transferOptions } from '../cli/helpers.js';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { CONFIG_DIR, CONFIG_FILE, SYNC_LOCK_FILE } from '../types.js';
 import type { SyncConfig } from '../types.js';
-import { GitBackend } from '../backends/git.js';
-import { CloudBackend } from '../backends/dropbox.js';
-import { SyncthingBackend } from '../backends/syncthing.js';
-import { RsyncBackend } from '../backends/rsync.js';
-import { CustomBackend } from '../backends/custom.js';
 import { DeviceRegistry } from '../core/device-registry.js';
 import { SnapshotManager } from '../core/snapshot.js';
 
@@ -42,7 +38,7 @@ export async function onSessionEnd(): Promise<string> {
     await fs.writeFile(lockFile, `${process.pid}`, 'utf-8');
 
     const claudeDir = path.join(os.homedir(), '.claude');
-    const backend = createBackend(config);
+    const backend = getBackend(config.backend);
 
     // Create a snapshot before pushing (for history)
     const snapshots = new SnapshotManager();
@@ -53,7 +49,7 @@ export async function onSessionEnd(): Promise<string> {
     }
 
     // Push local changes
-    const result = await backend.push(claudeDir);
+    const result = await backend.push(claudeDir, transferOptions(config));
 
     // Update device registry
     const registry = new DeviceRegistry();
@@ -99,16 +95,6 @@ async function loadConfig(): Promise<SyncConfig | null> {
   }
 }
 
-function createBackend(config: SyncConfig) {
-  switch (config.backend.type) {
-    case 'git': return new GitBackend(config.backend);
-    case 'cloud': return new CloudBackend(config.backend);
-    case 'syncthing': return new SyncthingBackend(config.backend);
-    case 'rsync': return new RsyncBackend(config.backend);
-    case 'custom': return new CustomBackend(config.backend);
-    default: throw new Error(`Unknown backend: ${config.backend.type}`);
-  }
-}
 
 async function fileExists(p: string): Promise<boolean> {
   try {

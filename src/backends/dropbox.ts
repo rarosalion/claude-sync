@@ -11,7 +11,9 @@ import * as fs from 'node:fs/promises';
 import * as fsSync from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import type { SyncBackend, BackendConfig, SyncResult, SyncStatus, CloudProvider } from '../types.js';
+import type { SyncBackend, BackendConfig, SyncResult, SyncStatus, CloudProvider, TransferOptions } from '../types.js';
+import { applyPulledTree, copyFiltered, createSyncFilter, ignoringNames, purgeNeverSync } from '../core/sync-filter.js';
+import { DEFAULT_HELD_DIR } from './git-sync.js';
 
 const CLOUD_SUBDIR = 'claude-sync';
 
@@ -51,7 +53,7 @@ export class CloudBackend implements SyncBackend {
     await fs.writeFile(markerFile, JSON.stringify(marker, null, 2), 'utf-8');
   }
 
-  async push(sourcePath: string): Promise<SyncResult> {
+  async push(sourcePath: string, options: TransferOptions = {}): Promise<SyncResult> {
     const start = Date.now();
 
     try {
@@ -59,7 +61,9 @@ export class CloudBackend implements SyncBackend {
         throw new Error('Cloud backend not initialized. Run claude-sync init first.');
       }
 
-      const filesChanged = await this.copyTree(sourcePath, this.syncDir);
+      const filter = ignoringNames(options.filter ?? createSyncFilter(), ['.claude-sync']);
+      const filesChanged = await copyFiltered(sourcePath, this.syncDir, { filter });
+      await purgeNeverSync(this.syncDir);
 
       return {
         success: true,
@@ -80,7 +84,7 @@ export class CloudBackend implements SyncBackend {
     }
   }
 
-  async pull(targetPath: string): Promise<SyncResult> {
+  async pull(targetPath: string, options: TransferOptions = {}): Promise<SyncResult> {
     const start = Date.now();
 
     try {
@@ -88,12 +92,14 @@ export class CloudBackend implements SyncBackend {
         throw new Error('Cloud backend not initialized. Run claude-sync init first.');
       }
 
-      const filesChanged = await this.copyTree(this.syncDir, targetPath, ['.claude-sync-marker']);
+      const filter = ignoringNames(options.filter ?? createSyncFilter(), ['.claude-sync']);
+      const { applied, held } = await applyPulledTree(this.syncDir, targetPath, options.heldDir ?? DEFAULT_HELD_DIR, filter);
 
       return {
         success: true,
-        filesChanged,
+        filesChanged: applied,
         conflicts: [],
+        held,
         timestamp: new Date().toISOString(),
         duration: Date.now() - start,
       };
@@ -194,49 +200,5 @@ export class CloudBackend implements SyncBackend {
     }
 
     return '';
-  }
-
-  private async copyTree(source: string, target: string, exclude: string[] = []): Promise<string[]> {
-    const changed: string[] = [];
-    await fs.mkdir(target, { recursive: true });
-
-    let entries;
-    try {
-      entries = await fs.readdir(source, { withFileTypes: true });
-    } catch {
-      return changed;
-    }
-
-    for (const entry of entries) {
-      if (exclude.includes(entry.name)) continue;
-      if (entry.name.startsWith('.claude-sync')) continue;
-
-      const srcPath = path.join(source, entry.name);
-      const destPath = path.join(target, entry.name);
-
-      if (entry.isDirectory()) {
-        const sub = await this.copyTree(srcPath, destPath, exclude);
-        changed.push(...sub);
-      } else if (entry.isFile()) {
-        // Only copy if content differs
-        let shouldCopy = true;
-        try {
-          const [srcContent, destContent] = await Promise.all([
-            fs.readFile(srcPath),
-            fs.readFile(destPath),
-          ]);
-          shouldCopy = !srcContent.equals(destContent);
-        } catch {
-          // Destination doesn't exist, copy
-        }
-
-        if (shouldCopy) {
-          await fs.copyFile(srcPath, destPath);
-          changed.push(path.relative(source, srcPath));
-        }
-      }
-    }
-
-    return changed;
   }
 }

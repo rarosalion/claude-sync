@@ -44,14 +44,24 @@ export interface BackendConfig {
 
 // ── Sync Backend Interface ──────────────────────────────────────────
 
+/** Options every backend honours when moving files in either direction. */
+export interface TransferOptions {
+  /** Which relative paths may be synced (NEVER_SYNC plus selective sync). */
+  filter?: (relPath: string) => boolean;
+  /** Where pull-protected files (settings.json, plugins/) are held for review. */
+  heldDir?: string;
+  /** Resolve merge conflicts in favour of this side (git-based backends). */
+  prefer?: 'local' | 'remote';
+}
+
 export interface SyncBackend {
   readonly type: BackendType;
   /** Initialize the backend (first-time setup) */
   init(config: BackendConfig): Promise<void>;
   /** Push local changes to the sync target */
-  push(sourcePath: string): Promise<SyncResult>;
+  push(sourcePath: string, options?: TransferOptions): Promise<SyncResult>;
   /** Pull remote changes to local */
-  pull(targetPath: string): Promise<SyncResult>;
+  pull(targetPath: string, options?: TransferOptions): Promise<SyncResult>;
   /** Get current sync status */
   status(): Promise<SyncStatus>;
   /** Check if backend is available/configured */
@@ -64,6 +74,8 @@ export interface SyncResult {
   success: boolean;
   filesChanged: string[];
   conflicts: ConflictInfo[];
+  /** Pull-protected files that changed remotely and wait for review. */
+  held?: string[];
   timestamp: string;
   duration: number;
   error?: string;

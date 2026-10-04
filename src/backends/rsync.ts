@@ -9,7 +9,12 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import type { SyncBackend, BackendConfig, SyncResult, SyncStatus } from '../types.js';
+import type { SyncBackend, BackendConfig, SyncResult, SyncStatus, TransferOptions } from '../types.js';
+import { applyPulledTree, createSyncFilter, stageFiltered } from '../core/sync-filter.js';
+import { DEFAULT_HELD_DIR } from './git-sync.js';
+
+const STAGE_DIR = path.join(os.homedir(), '.claude-sync', 'rsync-out');
+const CACHE_DIR = path.join(os.homedir(), '.claude-sync', 'rsync-in');
 
 const execFileAsync = promisify(execFile);
 
@@ -50,11 +55,14 @@ export class RsyncBackend implements SyncBackend {
     }
   }
 
-  async push(sourcePath: string): Promise<SyncResult> {
+  async push(sourcePath: string, options: TransferOptions = {}): Promise<SyncResult> {
     const start = Date.now();
 
     try {
-      const args = this.buildRsyncArgs(sourcePath + '/', this.rsyncTarget);
+      // Upload a filtered stage, never ~/.claude itself, and never --delete:
+      // other devices' files on the target must survive this push.
+      await stageFiltered(sourcePath, STAGE_DIR, options.filter ?? createSyncFilter());
+      const args = this.buildRsyncArgs(STAGE_DIR + '/', this.rsyncTarget, false);
       const { stdout } = await execFileAsync('rsync', args, { timeout: 60000 });
 
       const filesChanged = this.parseRsyncOutput(stdout);
@@ -78,20 +86,26 @@ export class RsyncBackend implements SyncBackend {
     }
   }
 
-  async pull(targetPath: string): Promise<SyncResult> {
+  async pull(targetPath: string, options: TransferOptions = {}): Promise<SyncResult> {
     const start = Date.now();
 
     try {
       const remoteSource = this.rsyncTarget.endsWith('/') ? this.rsyncTarget : this.rsyncTarget + '/';
-      const args = this.buildRsyncArgs(remoteSource, targetPath);
-      const { stdout } = await execFileAsync('rsync', args, { timeout: 60000 });
-
-      const filesChanged = this.parseRsyncOutput(stdout);
+      // Mirror the target into a private cache, then apply it like every
+      // other backend (filter, no deletions, protected files held).
+      await execFileAsync('rsync', this.buildRsyncArgs(remoteSource, CACHE_DIR + '/', true), { timeout: 60000 });
+      const { applied, held } = await applyPulledTree(
+        CACHE_DIR,
+        targetPath,
+        options.heldDir ?? DEFAULT_HELD_DIR,
+        options.filter ?? createSyncFilter()
+      );
 
       return {
         success: true,
-        filesChanged,
+        filesChanged: applied,
         conflicts: [],
+        held,
         timestamp: new Date().toISOString(),
         duration: Date.now() - start,
       };
@@ -112,7 +126,7 @@ export class RsyncBackend implements SyncBackend {
       // Do a dry-run to check what would change
       const claudeDir = path.join(os.homedir(), '.claude');
       const args = [
-        ...this.buildRsyncArgs(claudeDir + '/', this.rsyncTarget),
+        ...this.buildRsyncArgs(claudeDir + '/', this.rsyncTarget, false),
         '--dry-run',
       ];
 
@@ -149,10 +163,10 @@ export class RsyncBackend implements SyncBackend {
 
   // ── Private helpers ────────────────────────────────────────────
 
-  private buildRsyncArgs(source: string, dest: string): string[] {
+  private buildRsyncArgs(source: string, dest: string, mirror: boolean): string[] {
     const args = [
       '-avz',              // archive, verbose, compress
-      '--delete',          // remove files on dest that don't exist on source
+      ...(mirror ? ['--delete'] : []), // only for our private cache
       '--itemize-changes', // show what changed
       '--exclude', '.DS_Store',
       '--exclude', 'Thumbs.db',

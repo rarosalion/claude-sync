@@ -5,6 +5,7 @@
  * to any previous point in time.
  */
 
+import { writeFileAtomic } from './atomic.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -132,7 +133,7 @@ export class SnapshotManager {
 
   private async saveManifest(manifest: Snapshot[]): Promise<void> {
     await fs.mkdir(this.snapshotsDir, { recursive: true });
-    await fs.writeFile(this.manifestFile, JSON.stringify(manifest, null, 2), 'utf-8');
+    await writeFileAtomic(this.manifestFile, JSON.stringify(manifest, null, 2));
   }
 
   private async copyDirectory(source: string, target: string): Promise<{ fileCount: number; sizeBytes: number }> {

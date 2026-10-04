@@ -10,16 +10,12 @@
  *   claude-sync hook:start
  */
 
+import { getBackend, transferOptions } from '../cli/helpers.js';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { CONFIG_DIR, CONFIG_FILE, SYNC_LOCK_FILE } from '../types.js';
 import type { SyncConfig } from '../types.js';
-import { GitBackend } from '../backends/git.js';
-import { CloudBackend } from '../backends/dropbox.js';
-import { SyncthingBackend } from '../backends/syncthing.js';
-import { RsyncBackend } from '../backends/rsync.js';
-import { CustomBackend } from '../backends/custom.js';
 import { DeviceRegistry } from '../core/device-registry.js';
 import { SnapshotManager } from '../core/snapshot.js';
 
@@ -43,7 +39,7 @@ export async function onSessionStart(): Promise<string> {
     await fs.writeFile(lockFile, `${process.pid}`, 'utf-8');
 
     const claudeDir = path.join(os.homedir(), '.claude');
-    const backend = createBackend(config);
+    const backend = getBackend(config.backend);
 
     // Create a snapshot before pulling (safety net)
     const snapshots = new SnapshotManager();
@@ -54,7 +50,7 @@ export async function onSessionStart(): Promise<string> {
     }
 
     // Pull latest changes
-    const result = await backend.pull(claudeDir);
+    const result = await backend.pull(claudeDir, transferOptions(config));
 
     // Update device registry
     const registry = new DeviceRegistry();
@@ -64,11 +60,15 @@ export async function onSessionStart(): Promise<string> {
       return `[claude-sync] Pull failed: ${result.error}`;
     }
 
+    const heldNote = result.held?.length
+      ? ` ${result.held.length} settings/plugin change(s) held for review: run 'claude-sync sync --accept-incoming' after checking ~/.claude-sync/incoming.`
+      : '';
+
     if (result.filesChanged.length === 0) {
-      return '[claude-sync] Up to date';
+      return `[claude-sync] Up to date.${heldNote}`;
     }
 
-    return `[claude-sync] Pulled ${result.filesChanged.length} update(s) from other devices`;
+    return `[claude-sync] Pulled ${result.filesChanged.length} update(s) from other devices.${heldNote}`;
   } catch (err) {
     return `[claude-sync] Error: ${(err as Error).message}`;
   } finally {
@@ -93,16 +93,6 @@ async function loadConfig(): Promise<SyncConfig | null> {
   }
 }
 
-function createBackend(config: SyncConfig) {
-  switch (config.backend.type) {
-    case 'git': return new GitBackend(config.backend);
-    case 'cloud': return new CloudBackend(config.backend);
-    case 'syncthing': return new SyncthingBackend(config.backend);
-    case 'rsync': return new RsyncBackend(config.backend);
-    case 'custom': return new CustomBackend(config.backend);
-    default: throw new Error(`Unknown backend: ${config.backend.type}`);
-  }
-}
 
 async function fileExists(p: string): Promise<boolean> {
   try {

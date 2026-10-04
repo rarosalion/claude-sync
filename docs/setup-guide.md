@@ -12,7 +12,7 @@ Detailed setup instructions for each sync backend.
 The fastest way to get started:
 
 ```bash
-npm install -g claude-sync
+git clone https://github.com/renefichtmueller/claude-sync.git && cd claude-sync && npm install && npm install -g .
 claude-sync init
 ```
 
@@ -38,7 +38,7 @@ claude-sync init --backend git --remote-url git@github.com:you/claude-sync-data.
 
 ### How It Works
 
-claude-sync maintains a local git repo at `~/.claude-sync/repo/`. On push, it copies `.claude/` contents into this repo, commits, and pushes. On pull, it fetches, merges, and copies back to `.claude/`.
+claude-sync maintains a local git repo at `~/.claude-sync/repo/`. Each sync commits this device's state (including deletions since the last sync), merges the remote with git's three-way merge, applies what changed to `~/.claude` and pushes. A conflict stops the sync without overwriting anything.
 
 ### Tips
 
@@ -169,7 +169,7 @@ After setting up the first device, repeat on each additional device:
 
 ```bash
 # On each new device:
-npm install -g claude-sync
+git clone https://github.com/renefichtmueller/claude-sync.git && cd claude-sync && npm install && npm install -g .
 claude-sync init
 ```
 

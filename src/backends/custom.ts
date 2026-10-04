@@ -9,7 +9,13 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { SyncBackend, BackendConfig, SyncResult, SyncStatus } from '../types.js';
+import * as fs from 'node:fs/promises';
+import type { SyncBackend, BackendConfig, SyncResult, SyncStatus, TransferOptions } from '../types.js';
+import { applyPulledTree, createSyncFilter, stageFiltered } from '../core/sync-filter.js';
+import { DEFAULT_HELD_DIR } from './git-sync.js';
+
+const STAGE_OUT = path.join(os.homedir(), '.claude-sync', 'custom-out');
+const STAGE_IN = path.join(os.homedir(), '.claude-sync', 'custom-in');
 
 const execAsync = promisify(exec);
 
@@ -41,14 +47,16 @@ export class CustomBackend implements SyncBackend {
     }
   }
 
-  async push(sourcePath: string): Promise<SyncResult> {
+  async push(sourcePath: string, options: TransferOptions = {}): Promise<SyncResult> {
     const start = Date.now();
 
     try {
-      const command = this.interpolateCommand(this.pushCommand, sourcePath);
+      // The user's command only ever sees a filtered copy of ~/.claude.
+      await stageFiltered(sourcePath, STAGE_OUT, options.filter ?? createSyncFilter());
+      const command = this.interpolateCommand(this.pushCommand, STAGE_OUT);
       const { stdout } = await execAsync(command, {
         timeout: 120000,
-        env: { ...process.env, CLAUDE_SYNC_SOURCE: sourcePath },
+        env: { ...process.env, CLAUDE_SYNC_SOURCE: STAGE_OUT },
       });
 
       return {
@@ -70,20 +78,31 @@ export class CustomBackend implements SyncBackend {
     }
   }
 
-  async pull(targetPath: string): Promise<SyncResult> {
+  async pull(targetPath: string, options: TransferOptions = {}): Promise<SyncResult> {
     const start = Date.now();
 
     try {
-      const command = this.interpolateCommand(this.pullCommand, targetPath);
-      const { stdout } = await execAsync(command, {
+      // The command fills a private stage; the result is applied with the
+      // same filter and protected-file handling as every other backend.
+      await fs.rm(STAGE_IN, { recursive: true, force: true });
+      await fs.mkdir(STAGE_IN, { recursive: true });
+      const command = this.interpolateCommand(this.pullCommand, STAGE_IN);
+      await execAsync(command, {
         timeout: 120000,
-        env: { ...process.env, CLAUDE_SYNC_TARGET: targetPath },
+        env: { ...process.env, CLAUDE_SYNC_TARGET: STAGE_IN },
       });
+      const { applied, held } = await applyPulledTree(
+        STAGE_IN,
+        targetPath,
+        options.heldDir ?? DEFAULT_HELD_DIR,
+        options.filter ?? createSyncFilter()
+      );
 
       return {
         success: true,
-        filesChanged: stdout.trim() ? stdout.trim().split('\n') : [],
+        filesChanged: applied,
         conflicts: [],
+        held,
         timestamp: new Date().toISOString(),
         duration: Date.now() - start,
       };
@@ -147,9 +166,12 @@ export class CustomBackend implements SyncBackend {
    *   {hostname} → machine hostname
    */
   private interpolateCommand(command: string, pathValue: string): string {
+    // Values are quoted so spaces or shell characters in paths and host
+    // names cannot change the user's command.
+    const quote = (v: string) => `'${v.replace(/'/g, `'\\''`)}'`;
     return command
-      .replace(/\{path\}/g, pathValue)
-      .replace(/\{home\}/g, os.homedir())
-      .replace(/\{hostname\}/g, os.hostname());
+      .replace(/\{path\}/g, quote(pathValue))
+      .replace(/\{home\}/g, quote(os.homedir()))
+      .replace(/\{hostname\}/g, quote(os.hostname()));
   }
 }

@@ -77,7 +77,7 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
   console.log('');
   console.log(chalk.dim('  Config:'));
   console.log(chalk.dim(`    Backend:    ${config.backend.type}`));
-  console.log(chalk.dim(`    Encryption: ${config.encryption.enabled ? 'on' : 'off'}`));
+  console.log(chalk.dim('    Encryption: not implemented yet'));
   console.log(chalk.dim(`    Auto-sync:  ${config.autoSync.onSessionStart ? 'on' : 'off'}`));
   console.log(chalk.dim(`    Watcher:    ${config.autoSync.watchEnabled ? 'on' : 'off'}`));
 

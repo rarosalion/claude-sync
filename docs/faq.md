@@ -27,7 +27,7 @@ Typically very little. `.claude/` directories are mostly small text files (markd
 
 Yes, with caveats:
 - Use a **private** repo if using the Git backend
-- Enable **encryption** if you're syncing through cloud storage
+- Use a private sync target you control (encryption at rest is not implemented yet)
 - Consider the **Syncthing** backend for maximum privacy (no cloud)
 - Review your organization's policies on syncing tools
 
@@ -35,17 +35,18 @@ Yes, with caveats:
 
 ### What happens if I edit on two devices at the same time?
 
-claude-sync has smart conflict resolution:
-- Memory files are **merged** (new entries from both devices are combined)
-- Settings use **latest-wins** (most recent modification timestamp)
-- Activity logs are **merged chronologically**
-- CLAUDE.md shows you the diff and lets you choose
+With the Git and Gitea backends:
+- Changes to different files, or appends to the same memory file or activity log, are combined automatically
+- If the same lines changed on both devices, the sync stops without overwriting anything; run `claude-sync sync --prefer local` or `--prefer remote`
+- Changes to `settings.json` and `plugins/` from another device are held for your review
+
+The experimental backends (cloud, Syncthing, rsync, custom) copy files: the last copy wins.
 
 ### How often does it sync?
 
 Depends on your configuration:
-- **Auto-sync**: Pulls on session start, pushes on session end
-- **File watcher**: Real-time sync with a 2-second debounce (optional)
+- **Auto-sync**: Pulls on session start, pushes on session end, via Claude Code hooks (see the README)
+- **File watcher**: Not implemented yet
 - **Manual**: Run `claude-sync sync` whenever you want
 
 ### Can I sync only specific files?
@@ -53,8 +54,10 @@ Depends on your configuration:
 Yes, use selective sync:
 
 ```bash
-claude-sync config --include memory,skills --exclude settings
+claude-sync config --include projects,skills,CLAUDE.md --exclude todos
 ```
+
+The lists apply to this device only. Files already in the sync target stay there for your other devices; delete them on a device that syncs them to remove them everywhere.
 
 ### What if I lose internet during sync?
 
@@ -105,8 +108,6 @@ No. Zero telemetry, zero analytics, zero data collection. Everything stays betwe
 - **Syncthing**: Yes (TLS)
 - **rsync over SSH**: Yes (SSH encryption)
 
-### Should I enable encryption?
+### Is my data encrypted at rest?
 
-If you're using cloud storage (Dropbox, iCloud, OneDrive), **yes**. These providers can technically access your files. Encryption ensures only your devices can read the data.
-
-For Git with a private repo, Syncthing, or rsync, encryption is optional but adds defense-in-depth.
+Not yet. Encryption at rest is not implemented, so files are stored as-is in the sync target. Use a private repository or storage only you can access. Credentials such as `~/.claude/.credentials.json` are never synced.
