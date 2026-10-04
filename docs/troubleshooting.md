@@ -63,14 +63,20 @@ If no sync is actually running, remove it:
 rm ~/.claude-sync/.claude-sync.lock
 ```
 
-### Conflicts in CLAUDE.md
+### Sync stops with a conflict
 
-CLAUDE.md conflicts use the "ask-user" strategy and cannot be auto-resolved. The file stays at its local version. To resolve:
+The same lines changed on this device and on another one. Nothing was overwritten. Decide which side wins:
 
-1. Run `claude-sync sync --pull`
-2. Check the conflict message
-3. Manually edit `~/.claude/CLAUDE.md`
-4. Run `claude-sync sync --push`
+```bash
+claude-sync sync --prefer local    # keep this device's version
+claude-sync sync --prefer remote   # take the other device's version
+```
+
+A snapshot from before the sync is available via `claude-sync history` / `claude-sync restore`.
+
+### "file(s) can run commands and were not applied"
+
+Another device changed `settings.json` or something under `plugins/`. Review the files in `~/.claude-sync/incoming/`, then run `claude-sync sync --accept-incoming` or `claude-sync sync --reject-incoming`.
 
 ### Cloud storage not detected
 
@@ -80,11 +86,9 @@ If claude-sync can't find your cloud folder:
 claude-sync init --backend cloud --cloud-provider dropbox --cloud-path /path/to/Dropbox
 ```
 
-### Encryption key not found
+### "Unknown backend type: gitea"
 
-If you see "age identity not found":
-1. Check that `~/.claude-sync/age-identity.txt` exists
-2. Copy it from the device where you first ran `claude-sync init --encrypt`
+Fixed in 1.1.0. Update claude-sync on every device.
 
 ### Slow sync
 

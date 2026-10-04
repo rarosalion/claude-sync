@@ -42,4 +42,4 @@ export { SyncthingBackend } from './backends/syncthing.js';
 export { RsyncBackend } from './backends/rsync.js';
 export { CustomBackend } from './backends/custom.js';
 
-export const VERSION = '0.2.0';
+export { VERSION } from './version.js';

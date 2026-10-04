@@ -13,6 +13,8 @@ import { configCommand } from '../src/cli/config.js';
 import { historyCommand } from '../src/cli/history.js';
 import { restoreCommand } from '../src/cli/restore.js';
 import { VERSION } from '../src/index.js';
+import { onSessionStart } from '../src/hooks/session-start.js';
+import { onSessionEnd } from '../src/hooks/session-end.js';
 
 const program = new Command();
 
@@ -24,7 +26,7 @@ program
 program
   .command('init')
   .description('Set up claude-sync on this device (interactive wizard)')
-  .option('--backend <type>', 'Sync backend: git, cloud, syncthing, rsync, custom')
+  .option('--backend <type>', 'Sync backend: git, gitea, cloud, syncthing, rsync, custom')
   .option('--device-name <name>', 'Name for this device')
   .option('--remote-url <url>', 'Git remote URL (for git backend)')
   .option('--cloud-provider <provider>', 'Cloud provider: dropbox, icloud, onedrive')
@@ -33,7 +35,7 @@ program
   .option('--ssh-key <path>', 'SSH key path (for rsync backend)')
   .option('--push-cmd <command>', 'Custom push command')
   .option('--pull-cmd <command>', 'Custom pull command')
-  .option('--encrypt', 'Enable encryption at rest')
+  .option('--encrypt', 'Encryption at rest (not implemented yet; prints a notice)')
   .option('--no-auto-sync', 'Disable auto-sync on session start/end')
   .option('--no-watch', 'Disable real-time file watching')
   .action(initCommand);
@@ -43,9 +45,30 @@ program
   .description('Manually sync now (push and pull)')
   .option('--push', 'Push local changes only')
   .option('--pull', 'Pull remote changes only')
-  .option('--force', 'Force sync, overwriting conflicts')
+  .option('--prefer <side>', "Resolve conflicts with 'local' or 'remote' versions")
+  .option('--force', 'Deprecated: same as --prefer local')
+  .option('--accept-incoming', 'Apply held settings.json/plugins changes after review')
+  .option('--reject-incoming', 'Discard held settings.json/plugins changes')
   .option('--dry-run', 'Show what would change without syncing')
   .action(syncCommand);
+
+program
+  .command('hook <event>')
+  .description('Run a Claude Code session hook: session-start (pull) or session-end (push)')
+  .action(async (event: string) => {
+    const handlers: Record<string, () => Promise<string>> = {
+      'session-start': onSessionStart,
+      'session-end': onSessionEnd,
+    };
+    const handler = handlers[event];
+    if (!handler) {
+      console.error(`Unknown hook event: ${event}. Use session-start or session-end.`);
+      process.exitCode = 2;
+      return;
+    }
+    const message = await handler();
+    if (message) console.log(message);
+  });
 
 program
   .command('status')
@@ -66,8 +89,7 @@ program
   .description('View or update configuration')
   .option('--include <patterns>', 'Set include patterns (comma-separated)')
   .option('--exclude <patterns>', 'Set exclude patterns (comma-separated)')
-  .option('--encrypt', 'Enable encryption')
-  .option('--no-encrypt', 'Disable encryption')
+  .option('--encrypt', 'Encryption at rest (not implemented yet; prints a notice)')
   .option('--auto-sync', 'Enable auto-sync')
   .option('--no-auto-sync', 'Disable auto-sync')
   .option('--watch', 'Enable file watcher')

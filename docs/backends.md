@@ -8,7 +8,9 @@
 | **Speed** | Fast | Automatic | Real-time | On-demand | Varies |
 | **Setup** | Easy | Easiest | Medium | Advanced | Flexible |
 | **Version History** | Full | None | None | None | Varies |
-| **Conflict Handling** | Git merge | Last-write wins | Syncthing versioning | Last-write wins | Manual |
+| **Status** | Recommended (also Gitea) | Experimental | Experimental | Experimental | Experimental |
+| **Conflict Handling** | Three-way merge; conflicts stop the sync | Last copy wins | Last copy wins | Last copy wins | Depends on your commands |
+| **Deletions synced** | Yes | No | No | No | Depends |
 | **Offline Support** | Full | Partial | Full | None | Varies |
 | **Cost** | Free | Free (if you have storage) | Free | Free | Varies |
 | **Platforms** | All | macOS, Windows | All | macOS, Linux | All |

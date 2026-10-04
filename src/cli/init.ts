@@ -9,13 +9,8 @@ import inquirer from 'inquirer';
 import chalk from 'chalk';
 import { detectEnvironment, suggestBackend } from '../core/detector.js';
 import { DeviceRegistry } from '../core/device-registry.js';
-import { Encryption } from '../core/encryption.js';
-import { GitBackend } from '../backends/git.js';
-import { GiteaBackend } from '../backends/gitea.js';
-import { CloudBackend } from '../backends/dropbox.js';
-import { SyncthingBackend } from '../backends/syncthing.js';
-import { RsyncBackend } from '../backends/rsync.js';
-import { CustomBackend } from '../backends/custom.js';
+import { writeFileAtomic } from '../core/atomic.js';
+import { getBackend, ENCRYPTION_NOT_IMPLEMENTED } from './helpers.js';
 import { CONFIG_DIR, CONFIG_FILE } from '../types.js';
 import type { SyncConfig, BackendConfig, BackendType, CloudProvider } from '../types.js';
 
@@ -318,51 +313,12 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   // ── Encryption ───────────────────────────────────────────────
 
-  let encryptionEnabled = options.encrypt ?? false;
-
-  if (options.encrypt === undefined) {
-    const { encrypt } = await inquirer.prompt([{
-      type: 'confirm',
-      name: 'encrypt',
-      message: 'Enable encryption at rest?',
-      default: false,
-    }]);
-    encryptionEnabled = encrypt;
+  // Not offered until it actually encrypts synced files.
+  if (options.encrypt) {
+    console.log(chalk.yellow(`  ${ENCRYPTION_NOT_IMPLEMENTED}`));
+    console.log('');
   }
-
-  let encryptionConfig = { enabled: false } as { enabled: boolean; identityFile?: string; recipientKey?: string };
-
-  if (encryptionEnabled) {
-    if (!env.hasAge) {
-      console.log(chalk.yellow('  age encryption tool not found. Install it:'));
-      console.log(chalk.dim('    macOS:   brew install age'));
-      console.log(chalk.dim('    Linux:   apt install age'));
-      console.log(chalk.dim('    Windows: scoop install age'));
-      console.log('');
-
-      const { proceed } = await inquirer.prompt([{
-        type: 'confirm',
-        name: 'proceed',
-        message: 'Continue without encryption?',
-        default: true,
-      }]);
-
-      if (!proceed) {
-        console.log(chalk.dim('  Install age and run claude-sync init again.'));
-        return;
-      }
-    } else {
-      console.log(chalk.dim('  Generating encryption keypair...'));
-      const encryption = new Encryption({ enabled: true });
-      const { identityFile, publicKey } = await encryption.generateKeypair();
-      encryptionConfig = {
-        enabled: true,
-        identityFile,
-        recipientKey: publicKey,
-      };
-      console.log(chalk.green(`  Keypair generated. Identity: ${identityFile}`));
-    }
-  }
+  const encryptionConfig = { enabled: false };
 
   // ── Auto-sync ────────────────────────────────────────────────
 
@@ -415,7 +371,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
   };
 
   await fs.mkdir(configDir, { recursive: true });
-  await fs.writeFile(configFile, JSON.stringify(config, null, 2), 'utf-8');
+  await writeFileAtomic(configFile, JSON.stringify(config, null, 2));
 
   // Register this device
   await registry.registerDevice(device);
@@ -426,7 +382,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
   console.log(chalk.dim('  Initializing sync backend...'));
 
   try {
-    const backend = createBackend(backendConfig);
+    const backend = getBackend(backendConfig);
     await backend.init(backendConfig);
     console.log(chalk.green('  Backend initialized.'));
   } catch (err) {
@@ -441,25 +397,13 @@ export async function initCommand(options: InitOptions): Promise<void> {
   console.log('');
   console.log(`  ${chalk.dim('Device:')}     ${deviceName}`);
   console.log(`  ${chalk.dim('Backend:')}    ${formatBackend(backendConfig)}`);
-  console.log(`  ${chalk.dim('Encryption:')} ${encryptionConfig.enabled ? 'on' : 'off'}`);
+  console.log(`  ${chalk.dim('Encryption:')} not implemented yet`);
   console.log(`  ${chalk.dim('Auto-sync:')}  ${autoSyncEnabled ? 'enabled' : 'disabled'}`);
   console.log(`  ${chalk.dim('Watcher:')}    ${watchEnabled ? 'enabled' : 'disabled'}`);
   console.log('');
   console.log(chalk.dim("  Run 'claude-sync status' to check sync state."));
   console.log(chalk.dim("  Run 'claude-sync sync' to sync now."));
   console.log('');
-}
-
-function createBackend(config: BackendConfig) {
-  switch (config.type) {
-    case 'git': return new GitBackend(config);
-    case 'gitea': return new GiteaBackend(config);
-    case 'cloud': return new CloudBackend(config);
-    case 'syncthing': return new SyncthingBackend(config);
-    case 'rsync': return new RsyncBackend(config);
-    case 'custom': return new CustomBackend(config);
-    default: throw new Error(`Unknown backend: ${config.type}`);
-  }
 }
 
 function formatBackend(config: BackendConfig): string {

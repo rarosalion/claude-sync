@@ -4,117 +4,112 @@
 
 import * as os from 'node:os';
 import * as path from 'node:path';
+import * as fs from 'node:fs/promises';
 import chalk from 'chalk';
-import { loadConfig, getBackend } from './helpers.js';
+import { loadConfig, getBackend, transferOptions } from './helpers.js';
 import { SnapshotManager } from '../core/snapshot.js';
 import { DeviceRegistry } from '../core/device-registry.js';
+import { applyHeld } from '../core/sync-filter.js';
+import { DEFAULT_HELD_DIR } from '../backends/git-sync.js';
+import type { SyncResult } from '../types.js';
 
 interface SyncOptions {
   push?: boolean;
   pull?: boolean;
   force?: boolean;
   dryRun?: boolean;
+  prefer?: string;
+  acceptIncoming?: boolean;
+  rejectIncoming?: boolean;
+}
+
+function printFiles(files: string[]): void {
+  for (const file of files.slice(0, 10)) console.log(chalk.dim(`    ${file}`));
+  if (files.length > 10) console.log(chalk.dim(`    ... and ${files.length - 10} more`));
+}
+
+function printResult(result: SyncResult, verb: 'Pulled' | 'Pushed'): void {
+  if (!result.success) {
+    console.log(chalk.red(`  ${verb === 'Pulled' ? 'Pull' : 'Push'} failed: ${result.error}`));
+    printFiles(result.conflicts.map((c) => c.filePath));
+    return;
+  }
+  if (result.filesChanged.length === 0) {
+    console.log(chalk.dim(verb === 'Pulled' ? '  Already up to date.' : '  Nothing to push.'));
+  } else {
+    console.log(chalk.green(`  ${verb} ${result.filesChanged.length} file(s) in ${result.duration}ms`));
+    printFiles(result.filesChanged);
+  }
+  if (result.held && result.held.length > 0) {
+    console.log('');
+    console.log(chalk.yellow(`  ${result.held.length} file(s) can run commands and were not applied:`));
+    printFiles(result.held);
+    console.log(chalk.dim(`  Review them in ${DEFAULT_HELD_DIR}, then run`));
+    console.log(chalk.dim("  'claude-sync sync --accept-incoming' or 'claude-sync sync --reject-incoming'."));
+  }
+}
+
+async function handleIncoming(claudeDir: string, accept: boolean): Promise<void> {
+  if (accept) {
+    const applied = await applyHeld(DEFAULT_HELD_DIR, claudeDir);
+    console.log(applied.length ? chalk.green(`  Applied ${applied.length} held file(s).`) : chalk.dim('  Nothing was held.'));
+    printFiles(applied);
+  } else {
+    await fs.rm(DEFAULT_HELD_DIR, { recursive: true, force: true });
+    console.log(chalk.dim('  Discarded held files. The next sync pushes your local versions.'));
+  }
+  console.log('');
 }
 
 export async function syncCommand(options: SyncOptions): Promise<void> {
   const config = await loadConfig();
   if (!config) return;
 
-  const backend = getBackend(config.backend);
   const claudeDir = path.join(os.homedir(), '.claude');
-  const snapshot = new SnapshotManager();
-  const registry = new DeviceRegistry();
+  if (options.acceptIncoming || options.rejectIncoming) {
+    await handleIncoming(claudeDir, Boolean(options.acceptIncoming));
+    return;
+  }
 
-  const doPush = options.push || (!options.push && !options.pull);
-  const doPull = options.pull || (!options.push && !options.pull);
+  if (options.prefer && options.prefer !== 'local' && options.prefer !== 'remote') {
+    console.log(chalk.red("  --prefer must be 'local' or 'remote'."));
+    return;
+  }
+  // --force predates --prefer and keeps working as 'prefer local'.
+  const prefer = (options.prefer ?? (options.force ? 'local' : undefined)) as 'local' | 'remote' | undefined;
+  const backend = getBackend(config.backend);
+  const transfer = transferOptions(config, prefer);
+  const doPush = options.push || !options.pull;
+  const doPull = options.pull || !options.push;
 
   if (options.dryRun) {
-    console.log(chalk.dim('  [dry-run] No changes will be made'));
-    console.log('');
+    const status = await backend.status();
+    console.log(chalk.dim(`  [dry-run] ${status.availableUpdates} remote update(s), ${status.pendingChanges} local change(s).`));
+    return;
   }
 
-  // ── Pull Phase ─────────────────────────────────────────────
+  // One safety snapshot before anything can change ~/.claude.
+  await new SnapshotManager()
+    .create(claudeDir, config.deviceId, config.deviceName, 'pre-sync backup')
+    .catch(() => undefined);
 
+  let ok = true;
   if (doPull) {
     console.log(chalk.cyan('  Pulling remote changes...'));
-
-    if (!options.dryRun) {
-      // Create a snapshot before pulling (safety net)
-      try {
-        await snapshot.create(claudeDir, config.deviceId, config.deviceName, 'pre-pull backup');
-      } catch {
-        // Non-fatal if snapshot fails
-      }
-
-      const result = await backend.pull(claudeDir);
-
-      if (result.success) {
-        if (result.filesChanged.length === 0) {
-          console.log(chalk.dim('  Already up to date.'));
-        } else {
-          console.log(chalk.green(`  Pulled ${result.filesChanged.length} file(s) in ${result.duration}ms`));
-          for (const file of result.filesChanged.slice(0, 10)) {
-            console.log(chalk.dim(`    ${file}`));
-          }
-          if (result.filesChanged.length > 10) {
-            console.log(chalk.dim(`    ... and ${result.filesChanged.length - 10} more`));
-          }
-        }
-
-        // Handle conflicts
-        if (result.conflicts.length > 0) {
-          console.log('');
-          console.log(chalk.yellow(`  ${result.conflicts.length} conflict(s) detected:`));
-          for (const conflict of result.conflicts) {
-            if (conflict.resolved) {
-              console.log(chalk.dim(`    ${conflict.filePath} — ${conflict.resolution}`));
-            } else {
-              console.log(chalk.yellow(`    ${conflict.filePath} — needs manual resolution`));
-            }
-          }
-        }
-      } else {
-        console.log(chalk.red(`  Pull failed: ${result.error}`));
-      }
-    } else {
-      const status = await backend.status();
-      console.log(chalk.dim(`  Would pull ${status.availableUpdates} update(s)`));
-    }
-
+    const result = await backend.pull(claudeDir, transfer);
+    printResult(result, 'Pulled');
+    ok = result.success;
     console.log('');
   }
 
-  // ── Push Phase ─────────────────────────────────────────────
-
-  if (doPush) {
+  if (doPush && ok) {
     console.log(chalk.cyan('  Pushing local changes...'));
-
-    if (!options.dryRun) {
-      const result = await backend.push(claudeDir);
-
-      if (result.success) {
-        if (result.filesChanged.length === 0) {
-          console.log(chalk.dim('  Nothing to push.'));
-        } else {
-          console.log(chalk.green(`  Pushed ${result.filesChanged.length} file(s) in ${result.duration}ms`));
-          for (const file of result.filesChanged.slice(0, 10)) {
-            console.log(chalk.dim(`    ${file}`));
-          }
-          if (result.filesChanged.length > 10) {
-            console.log(chalk.dim(`    ... and ${result.filesChanged.length - 10} more`));
-          }
-        }
-
-        // Update device last-sync timestamp
-        await registry.updateLastSync(config.deviceId);
-      } else {
-        console.log(chalk.red(`  Push failed: ${result.error}`));
-      }
-    } else {
-      const status = await backend.status();
-      console.log(chalk.dim(`  Would push ${status.pendingChanges} change(s)`));
-    }
-
+    const result = await backend.push(claudeDir, transfer);
+    printResult(result, 'Pushed');
+    ok = result.success;
     console.log('');
   }
+
+  if (ok) await new DeviceRegistry().updateLastSync(config.deviceId);
+  if (!ok) process.exitCode = 1;
 }
