@@ -178,6 +178,8 @@ export interface Snapshot {
   fileCount: number;
   sizeBytes: number;
   description?: string;
+  /** Hash of the snapshotted files' paths, sizes and mtimes, used to skip no-change snapshots. */
+  fingerprint?: string;
 }
 
 // ── OS Detection ────────────────────────────────────────────────────

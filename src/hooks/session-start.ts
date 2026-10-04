@@ -39,16 +39,6 @@ export async function onSessionStart(): Promise<string> {
         // Non-fatal
       }
 
-      // Auto-prune old snapshots (keep last 50). Sessions that never reach a
-      // clean SessionEnd (crash, kill, disconnect) would otherwise leave their
-      // session-start snapshot unpruned forever, since SessionEnd is the only
-      // other place prune() runs.
-      try {
-        await snapshots.prune(50);
-      } catch {
-        // Non-fatal
-      }
-
       // Pull latest changes
       const pullResult = await backend.pull(claudeDir);
 

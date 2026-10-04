@@ -45,13 +45,6 @@ export async function onSessionEnd(): Promise<string> {
       const registry = new DeviceRegistry();
       await registry.updateLastSync(config.deviceId);
 
-      // Auto-prune old snapshots (keep last 50)
-      try {
-        await snapshots.prune(50);
-      } catch {
-        // Non-fatal
-      }
-
       if (!pushResult.success) {
         return `[claude-sync] Push failed: ${pushResult.error}`;
       }
