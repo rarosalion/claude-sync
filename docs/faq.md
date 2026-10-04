@@ -21,7 +21,7 @@ Yes. claude-sync uses cross-platform paths and works on macOS, Linux, and Window
 
 ### How much disk space does it use?
 
-Typically very little. `.claude/` directories are mostly small text files (markdown, JSON). Expect a few MB at most. Snapshots are pruned automatically (keeping the 50 most recent by default).
+Typically very little. `.claude/` directories are mostly small text files (markdown, JSON). Expect a few MB at most. Snapshots cover only what sync manages (not plugins, caches or session transcripts), are skipped when nothing has changed, and are pruned automatically after every snapshot: at most 30 are kept, and any older than 7 days go too (apart from the newest 3).
 
 ### Is it safe to use on a work machine?
 
