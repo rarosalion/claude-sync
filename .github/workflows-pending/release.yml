@@ -1,0 +1,66 @@
+name: Release
+
+# Every merge to main is analysed with semantic-release: `fix:` and `perf:` commits cut a patch
+# release, `feat:` a minor one, and a `!` after the type or a `BREAKING CHANGE:` footer a major
+# one. Other types (docs, chore, ci, ...) do not release. A release bumps package.json,
+# package-lock.json and the VERSION literal in src/index.ts, updates CHANGELOG.md, commits that
+# as `chore(release)` with [skip ci], then tags and publishes a GitHub release. Nothing is
+# published to npm. Commit messages are enforced on pull requests by commit-lint.yml.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+# Never run two releases at once, and never cancel one halfway through tagging.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm install
+      # The committed lockfile has drifted from package.json, so `npm install` rewrites it.
+      # Discard that so the release commit only contains the version bump.
+      - run: git checkout -- package-lock.json
+      - run: npx tsc --noEmit
+      - run: npm run build
+      - run: npm test
+
+      # semantic-release needs a previous tag to know where to start counting from, or it
+      # would release 1.0.0. If the repo has never been tagged, tag the commit this push
+      # replaced with the version package.json had there.
+      - name: Tag the baseline version if the repo has no release tags yet
+        run: |
+          if [ -z "$(git tag -l 'v*')" ]; then
+            base="${{ github.event.before }}"
+            version=$(git show "$base:package.json" | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")
+            echo "No release tags yet; tagging $base as v$version"
+            git tag "v$version" "$base"
+            git push origin "v$version"
+          fi
+
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          npx -y
+          -p semantic-release@24
+          -p @semantic-release/changelog@6
+          -p @semantic-release/exec@7
+          -p @semantic-release/git@10
+          semantic-release
