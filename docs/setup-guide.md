@@ -4,7 +4,7 @@ Detailed setup instructions for each sync backend.
 
 ## Prerequisites
 
-- Node.js >= 18
+- Node.js >= 22.12
 - Claude Code installed and working (so `~/.claude/` exists)
 
 ## Interactive Setup
