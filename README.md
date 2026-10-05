@@ -38,7 +38,7 @@ That's it. Three commands. Now your `.claude/` directory syncs across all your m
 Prefer to build from a local clone instead of the published package:
 
 ```bash
-git clone https://github.com/claude-sync/claude-sync.git
+git clone https://github.com/rarosalion/claude-sync.git
 cd claude-sync
 npm install
 npm run build

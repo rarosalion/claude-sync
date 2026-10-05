@@ -19,11 +19,11 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "https://github.com/claude-sync/claude-sync"
+    "url": "https://github.com/rarosalion/claude-sync"
   },
-  "homepage": "https://github.com/claude-sync/claude-sync#readme",
+  "homepage": "https://github.com/rarosalion/claude-sync#readme",
   "bugs": {
-    "url": "https://github.com/claude-sync/claude-sync/issues"
+    "url": "https://github.com/rarosalion/claude-sync/issues"
   },
   "bin": {
     "claude-sync": "./dist/bin/claude-sync.js"

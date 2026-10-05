@@ -6,7 +6,7 @@ Thanks for your interest in contributing! Here's how to get started.
 
 ```bash
 # Clone the repo
-git clone https://github.com/claude-sync/claude-sync.git
+git clone https://github.com/rarosalion/claude-sync.git
 cd claude-sync
 
 # Install dependencies
