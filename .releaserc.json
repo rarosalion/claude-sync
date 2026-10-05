@@ -8,15 +8,9 @@
     ["@semantic-release/changelog", { "changelogFile": "CHANGELOG.md" }],
     ["@semantic-release/npm", { "npmPublish": false }],
     [
-      "@semantic-release/exec",
-      {
-        "prepareCmd": "sed -i \"s/^export const VERSION = '.*';/export const VERSION = '${nextRelease.version}';/\" src/index.ts"
-      }
-    ],
-    [
       "@semantic-release/git",
       {
-        "assets": ["package.json", "package-lock.json", "CHANGELOG.md", "src/index.ts"],
+        "assets": ["package.json", "package-lock.json", "CHANGELOG.md"],
         "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
       }
     ],

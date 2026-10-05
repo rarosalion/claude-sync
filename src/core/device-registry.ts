@@ -2,6 +2,8 @@
  * Device registry — tracks all machines connected to the sync
  */
 
+import { writeFileAtomic } from './atomic.js';
+import { VERSION } from '../version.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -39,7 +41,7 @@ export class DeviceRegistry {
       lastSync: null,
       lastSeen: new Date().toISOString(),
       claudePath: path.join(os.homedir(), '.claude'),
-      version: process.env.npm_package_version ?? '0.1.0',
+      version: VERSION,
     };
   }
 
@@ -69,7 +71,7 @@ export class DeviceRegistry {
     }
 
     await fs.mkdir(this.configDir, { recursive: true });
-    await fs.writeFile(this.devicesFile, JSON.stringify(devices, null, 2), 'utf-8');
+    await writeFileAtomic(this.devicesFile, JSON.stringify(devices, null, 2));
   }
 
   /**
@@ -82,7 +84,7 @@ export class DeviceRegistry {
     if (device) {
       device.lastSync = new Date().toISOString();
       device.lastSeen = new Date().toISOString();
-      await fs.writeFile(this.devicesFile, JSON.stringify(devices, null, 2), 'utf-8');
+      await writeFileAtomic(this.devicesFile, JSON.stringify(devices, null, 2));
     }
   }
 
@@ -95,7 +97,7 @@ export class DeviceRegistry {
 
     if (filtered.length === devices.length) return false;
 
-    await fs.writeFile(this.devicesFile, JSON.stringify(filtered, null, 2), 'utf-8');
+    await writeFileAtomic(this.devicesFile, JSON.stringify(filtered, null, 2));
     return true;
   }
 

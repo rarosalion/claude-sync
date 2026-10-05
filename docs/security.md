@@ -1,110 +1,77 @@
-# Security & Privacy
+# Security
 
-claude-sync takes security seriously. Your Claude Code memory may contain project details, preferences, and other sensitive context.
+claude-sync moves the contents of `~/.claude` between your devices. That directory holds memory, skills and settings, and on some systems also your Claude Code login. This page describes what claude-sync does to keep that safe, and what it does not do (yet).
 
 ## Principles
 
-1. **Your data stays yours.** No telemetry, no analytics, no phone-home.
-2. **You choose where data goes.** All backends are self-hosted or under your control.
-3. **Encryption is optional but encouraged.** Especially for cloud-based backends.
-4. **Minimal permissions.** claude-sync only reads/writes `~/.claude/` and `~/.claude-sync/`.
+1. **Your data stays on infrastructure you choose.** No telemetry, no third-party servers.
+2. **Credentials never leave the device.**
+3. **A sync target is not trusted to run code on your machines.**
+4. **Nothing is overwritten silently.** Conflicts stop the sync; a snapshot is taken first.
 
-## Encryption at Rest
+## Never synced
 
-claude-sync supports optional encryption using [age](https://age-encryption.org), a modern file encryption tool.
+These paths are excluded in both directions, in every backend, whatever the selective-sync configuration says. They are matched against every path segment:
 
-### How It Works
+| Pattern | Why |
+|---------|-----|
+| `.credentials.json` | Claude Code login (OAuth tokens) |
+| `settings.local.json` | Per-machine settings by Claude Code convention |
+| `.env`, `.env.*` | Secrets in dotenv files (`.env.example`, `.env.sample`, `.env.template` are allowed) |
+| `*.pem`, `*.key`, `*.p12`, `*.pfx`, `id_rsa*`, `id_ecdsa*`, `id_ed25519*` | Keys and certificates |
+| `shell-snapshots/`, `session-env/` | Captured shell environments, which can contain exported tokens |
+| `ide/` | IDE connection lock files with auth tokens |
+| `statsig/` | Device-specific cache |
 
-1. During `claude-sync init`, choose to enable encryption.
-2. claude-sync generates an age keypair stored at `~/.claude-sync/age-identity.txt`.
-3. Before pushing, all files are encrypted with your public key.
-4. After pulling, files are decrypted with your private key.
-5. Only your devices (with the identity file) can decrypt the data.
+Copies of these files that older versions placed in the sync target (the git working tree, the cloud or Syncthing folder) are deleted from it on the next sync. **They remain in git history.** If you used a hosted remote with a version before 1.1.0, log out and back in to Claude Code to replace the login, and rewrite the remote's history (for example with `git filter-repo --path .credentials.json --invert-paths`).
 
-### Enabling Encryption
+## Files that can run commands
 
-```bash
-# During init
-claude-sync init --encrypt
+`~/.claude/settings.json` can define hooks (shell commands Claude Code runs on events), and `~/.claude/plugins/` can contain plugin hooks and MCP servers. If claude-sync applied remote changes to them automatically, anyone with write access to your sync target could run code on every device.
 
-# After init
-claude-sync config --encrypt
-```
+So when another device changes them, claude-sync:
 
-### Key Management
+1. leaves your local version untouched,
+2. stores the incoming version in `~/.claude-sync/incoming/`,
+3. tells you (in `claude-sync sync` output and in the session-start hook message).
 
-- **Identity file**: `~/.claude-sync/age-identity.txt` (private key)
-- **Permissions**: Automatically set to `0600` (owner read/write only)
-- **Sharing**: Copy the identity file to each device that needs to decrypt
+After reviewing the files, run `claude-sync sync --accept-incoming` to apply them or `--reject-incoming` to discard them. A new device also has to accept them once. Your own local changes to these files are synced normally.
 
-> **Important**: Back up your identity file. If you lose it, you cannot decrypt your synced data.
+## Encryption at rest
 
-### What Gets Encrypted
+**Not implemented yet.** Files are stored unencrypted in the sync target. Until it is, use a private repository or a storage location only you can read. The `--encrypt` flags print a notice and change nothing.
 
-When encryption is enabled, ALL files synced through claude-sync are encrypted:
-- Memory files (`.md`)
-- Settings (`.json`)
-- Skills
-- Activity logs
-- Project configurations
+## Encryption in transit
 
-### What Is NOT Encrypted
+This depends on the backend and is handled by the underlying tool:
 
-- The `~/.claude-sync/config.json` file (contains no sensitive content data)
-- The device registry (`devices.json`)
-- Snapshot manifests
+- **Git / Gitea**: SSH or HTTPS
+- **Cloud storage**: the provider's client (TLS)
+- **Syncthing**: TLS between devices
+- **rsync**: SSH
 
-## Backend-Specific Security
+## Backend notes
 
-### Git
+### Git / Gitea
 
-- Use a **private** repository
-- Use **SSH key authentication** (not HTTPS with stored passwords)
-- Consider a dedicated repo that only claude-sync accesses
-- Enable encryption if using a hosted service (GitHub, GitLab)
+- Use a **private** repository.
+- The Gitea backend stores your access token in the clone URL inside `~/.claude-sync/gitea-repo/.git/config` (file permissions of your home directory apply).
 
-### Cloud Storage
+### Cloud storage, Syncthing, rsync, custom (experimental)
 
-- Files are stored in your cloud provider's infrastructure
-- Subject to your cloud provider's privacy policy
-- **Strongly recommend enabling encryption** for this backend
-- The `claude-sync/` subfolder is created in your cloud storage root
+- They copy files; they do not merge. The last copy wins and deletions are not propagated.
+- The never-synced list and the held-files rule apply to them as well.
+- The custom backend passes a filtered staging copy to your commands, never `~/.claude` itself. Placeholders are inserted shell-quoted.
 
-### Syncthing
+## Local files
 
-- Data never leaves your devices (P2P)
-- Uses TLS encryption in transit
-- No cloud, no third-party access
-- Encryption at rest is optional but adds an extra layer
+| Path | Content |
+|------|---------|
+| `~/.claude-sync/config.json` | Configuration (written atomically) |
+| `~/.claude-sync/devices.json` | Device registry |
+| `~/.claude-sync/snapshots/` | Local snapshots taken before each sync; they contain everything in `~/.claude`, including credentials, and never leave the device |
+| `~/.claude-sync/incoming/` | Held `settings.json` / `plugins/` changes awaiting review |
 
-### rsync/SSH
+## Reporting a vulnerability
 
-- Data travels over encrypted SSH connections
-- Stored on the remote machine you control
-- Use SSH key authentication (never passwords)
-- Encryption at rest protects against remote machine compromise
-
-## File Permissions
-
-claude-sync respects file permissions:
-
-- Config files: `0644`
-- Identity (encryption key): `0600`
-- Snapshot directories: `0755`
-
-## Lock Files
-
-During sync operations, a lock file (`~/.claude-sync/.claude-sync.lock`) prevents concurrent syncs that could corrupt data.
-
-## Snapshot Safety
-
-Before every pull operation, claude-sync creates a local snapshot. If a sync goes wrong, you can always restore:
-
-```bash
-claude-sync history
-claude-sync restore <snapshot-id>
-```
-
-## Reporting Issues
-
-If you find a security issue, please report it responsibly. Open an issue on GitHub or contact the maintainers directly.
+Please open a private security advisory on GitHub (Security → Report a vulnerability) instead of a public issue.

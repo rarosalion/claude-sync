@@ -12,7 +12,7 @@
 
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { loadConfig, getBackend } from '../cli/helpers.js';
+import { loadConfig, getBackend, transferOptions } from '../cli/helpers.js';
 import { DeviceRegistry } from '../core/device-registry.js';
 import { SnapshotManager } from '../core/snapshot.js';
 import { withSyncLock, ALREADY_SYNCING } from '../core/sync-lock.js';
@@ -29,7 +29,7 @@ export async function onSessionStart(): Promise<string> {
   const result = await withSyncLock(async () => {
     try {
       const claudeDir = path.join(os.homedir(), '.claude');
-      const backend = getBackend(config.backend, config.selective);
+      const backend = getBackend(config.backend);
 
       // Create a snapshot before pulling (safety net)
       const snapshots = new SnapshotManager();
@@ -40,7 +40,7 @@ export async function onSessionStart(): Promise<string> {
       }
 
       // Pull latest changes
-      const pullResult = await backend.pull(claudeDir);
+      const pullResult = await backend.pull(claudeDir, transferOptions(config));
 
       // Update device registry
       const registry = new DeviceRegistry();
@@ -50,11 +50,15 @@ export async function onSessionStart(): Promise<string> {
         return `[claude-sync] Pull failed: ${pullResult.error}`;
       }
 
+      const heldNote = pullResult.held?.length
+        ? ` ${pullResult.held.length} settings/plugin change(s) held for review: run 'claude-sync sync --accept-incoming' after checking ~/.claude-sync/incoming.`
+        : '';
+
       if (pullResult.filesChanged.length === 0) {
-        return '[claude-sync] Up to date';
+        return `[claude-sync] Up to date.${heldNote}`;
       }
 
-      return `[claude-sync] Pulled ${pullResult.filesChanged.length} update(s) from other devices`;
+      return `[claude-sync] Pulled ${pullResult.filesChanged.length} update(s) from other devices.${heldNote}`;
     } catch (err) {
       return `[claude-sync] Error: ${(err as Error).message}`;
     }

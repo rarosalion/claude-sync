@@ -7,8 +7,12 @@ import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import chalk from 'chalk';
 import { CONFIG_DIR, CONFIG_FILE } from '../types.js';
-import type { SyncConfig, BackendConfig, SyncBackend, SelectiveSyncConfig } from '../types.js';
+import type { SyncConfig, BackendConfig, SyncBackend, TransferOptions } from '../types.js';
 import { GitBackend } from '../backends/git.js';
+import { GiteaBackend } from '../backends/gitea.js';
+import { DEFAULT_HELD_DIR } from '../backends/git-sync.js';
+import { createSyncFilter } from '../core/sync-filter.js';
+import { writeFileAtomic } from '../core/atomic.js';
 import { CloudBackend } from '../backends/dropbox.js';
 import { SyncthingBackend } from '../backends/syncthing.js';
 import { RsyncBackend } from '../backends/rsync.js';
@@ -35,24 +39,18 @@ export async function loadConfig(): Promise<SyncConfig | null> {
  * Save the sync configuration
  */
 export async function saveConfig(config: SyncConfig): Promise<void> {
-  const configDir = path.join(os.homedir(), CONFIG_DIR);
-  const configFile = path.join(configDir, CONFIG_FILE);
-  await fs.mkdir(configDir, { recursive: true });
-  await fs.writeFile(configFile, JSON.stringify(config, null, 2), 'utf-8');
+  await writeFileAtomic(path.join(os.homedir(), CONFIG_DIR, CONFIG_FILE), JSON.stringify(config, null, 2));
 }
 
 /**
- * Create the appropriate backend from config.
- *
- * selectiveConfig is currently only wired into GitBackend - the one backend actually exercised
- * by real usage. The other backends' own copy paths (cloud's folder sync, custom's user-supplied
- * commands, etc.) don't consult it; extending selective sync to those is a separate, untested
- * change, not bundled in here.
+ * Create the appropriate backend from config
  */
-export function getBackend(backendConfig: BackendConfig, selectiveConfig?: SelectiveSyncConfig): SyncBackend {
+export function getBackend(backendConfig: BackendConfig): SyncBackend {
   switch (backendConfig.type) {
     case 'git':
-      return new GitBackend(backendConfig, undefined, selectiveConfig);
+      return new GitBackend(backendConfig);
+    case 'gitea':
+      return new GiteaBackend(backendConfig);
     case 'cloud':
       return new CloudBackend(backendConfig);
     case 'syncthing':
@@ -65,6 +63,14 @@ export function getBackend(backendConfig: BackendConfig, selectiveConfig?: Selec
       throw new Error(`Unknown backend type: ${backendConfig.type}`);
   }
 }
+
+/** Transfer options every sync entry point passes to its backend. */
+export function transferOptions(config: SyncConfig, prefer?: 'local' | 'remote'): TransferOptions {
+  return { filter: createSyncFilter(config.selective), heldDir: DEFAULT_HELD_DIR, prefer };
+}
+
+export const ENCRYPTION_NOT_IMPLEMENTED =
+  'Encryption at rest is not implemented yet: files are synced unencrypted. Use a private remote you control.';
 
 /**
  * Format bytes to human-readable size

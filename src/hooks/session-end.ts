@@ -11,7 +11,7 @@
 
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { loadConfig, getBackend } from '../cli/helpers.js';
+import { loadConfig, getBackend, transferOptions } from '../cli/helpers.js';
 import { DeviceRegistry } from '../core/device-registry.js';
 import { SnapshotManager } from '../core/snapshot.js';
 import { withSyncLock, ALREADY_SYNCING } from '../core/sync-lock.js';
@@ -28,7 +28,7 @@ export async function onSessionEnd(): Promise<string> {
   const result = await withSyncLock(async () => {
     try {
       const claudeDir = path.join(os.homedir(), '.claude');
-      const backend = getBackend(config.backend, config.selective);
+      const backend = getBackend(config.backend);
 
       // Create a snapshot before pushing (for history)
       const snapshots = new SnapshotManager();
@@ -39,7 +39,7 @@ export async function onSessionEnd(): Promise<string> {
       }
 
       // Push local changes
-      const pushResult = await backend.push(claudeDir);
+      const pushResult = await backend.push(claudeDir, transferOptions(config));
 
       // Update device registry
       const registry = new DeviceRegistry();

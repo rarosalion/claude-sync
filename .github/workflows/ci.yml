@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [18, 20]
+        node-version: [22, 24]
     steps:
       - uses: actions/checkout@v4
 
@@ -19,6 +19,10 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
-      - run: npm install
+      - run: npm ci
       - run: npx tsc --noEmit
+      - run: npm run lint
+      - run: npm test
       - run: npm run build
+      - name: CLI starts
+        run: node dist/bin/claude-sync.js --help

@@ -8,7 +8,9 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import type { SyncBackend, BackendConfig, SyncResult, SyncStatus } from '../types.js';
+import type { SyncBackend, BackendConfig, SyncResult, SyncStatus, TransferOptions } from '../types.js';
+import { applyPulledTree, copyFiltered, createSyncFilter, ignoringNames, purgeNeverSync } from '../core/sync-filter.js';
+import { DEFAULT_HELD_DIR } from './git-sync.js';
 
 const DEFAULT_API = 'http://127.0.0.1:8384';
 
@@ -50,12 +52,14 @@ export class SyncthingBackend implements SyncBackend {
     }
   }
 
-  async push(sourcePath: string): Promise<SyncResult> {
+  async push(sourcePath: string, options: TransferOptions = {}): Promise<SyncResult> {
     const start = Date.now();
 
     try {
       // Copy .claude/ contents to the Syncthing-watched directory
-      const filesChanged = await this.copyTree(sourcePath, this.syncDir);
+      const filter = ignoringNames(options.filter ?? createSyncFilter(), ['.stfolder', '.stignore']);
+      const filesChanged = await copyFiltered(sourcePath, this.syncDir, { filter });
+      await purgeNeverSync(this.syncDir);
 
       // Syncthing will detect and sync the changes automatically
       // Optionally trigger a rescan via the API
@@ -80,17 +84,19 @@ export class SyncthingBackend implements SyncBackend {
     }
   }
 
-  async pull(targetPath: string): Promise<SyncResult> {
+  async pull(targetPath: string, options: TransferOptions = {}): Promise<SyncResult> {
     const start = Date.now();
 
     try {
       // Copy from Syncthing-watched directory to .claude/
-      const filesChanged = await this.copyTree(this.syncDir, targetPath);
+      const filter = ignoringNames(options.filter ?? createSyncFilter(), ['.stfolder', '.stignore']);
+      const { applied, held } = await applyPulledTree(this.syncDir, targetPath, options.heldDir ?? DEFAULT_HELD_DIR, filter);
 
       return {
         success: true,
-        filesChanged,
+        filesChanged: applied,
         conflicts: [],
+        held,
         timestamp: new Date().toISOString(),
         duration: Date.now() - start,
       };
@@ -248,34 +254,5 @@ export class SyncthingBackend implements SyncBackend {
     } catch {
       return { lastSync: null, needFiles: 0, receiveOnlyTotalItems: 0 };
     }
-  }
-
-  private async copyTree(source: string, target: string): Promise<string[]> {
-    const changed: string[] = [];
-    await fs.mkdir(target, { recursive: true });
-
-    let entries;
-    try {
-      entries = await fs.readdir(source, { withFileTypes: true });
-    } catch {
-      return changed;
-    }
-
-    for (const entry of entries) {
-      if (entry.name.startsWith('.stfolder') || entry.name.startsWith('.stignore')) continue;
-
-      const srcPath = path.join(source, entry.name);
-      const destPath = path.join(target, entry.name);
-
-      if (entry.isDirectory()) {
-        const sub = await this.copyTree(srcPath, destPath);
-        changed.push(...sub);
-      } else if (entry.isFile()) {
-        await fs.copyFile(srcPath, destPath);
-        changed.push(path.relative(source, srcPath));
-      }
-    }
-
-    return changed;
   }
 }
