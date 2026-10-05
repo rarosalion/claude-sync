@@ -14,7 +14,7 @@
     "ai",
     "vibecoding"
   ],
-  "author": "claude-sync contributors",
+  "author": "renefichtmueller",
   "license": "MIT",
   "type": "module",
   "repository": {
@@ -36,14 +36,17 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
     "postbuild": "chmod +x dist/bin/claude-sync.js",
     "dev": "tsc --watch",
     "start": "node dist/bin/claude-sync.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint src/ bin/ tests/",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "prepare": "npm run build",
+    "clean": "node -e \"import('node:fs').then(({ rmSync }) => rmSync('dist', { recursive: true, force: true }))\"",
+    "typecheck": "tsc --noEmit"
   },
   "engines": {
     "node": ">=18.0.0"

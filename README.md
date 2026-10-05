@@ -8,6 +8,7 @@
 
 **Switch machines, keep the context.** Your Claude Code memory, skills, and settings follow you everywhere.
 
+[![CI](https://github.com/renefichtmueller/claude-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/renefichtmueller/claude-sync/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18-green.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.5-blue.svg)](https://www.typescriptlang.org/)
@@ -17,21 +18,26 @@
 
 </div>
 
+> [!IMPORTANT]
+> **Upgrading from a version before 1.1.0?** Older versions synced `~/.claude/.credentials.json` (your Claude Code login), shell snapshots and IDE tokens to the sync target, and applied `settings.json` from other devices without asking. 1.1.0 stops that and removes those files from the sync target on the next sync. If you used a hosted remote, log out and back in to Claude Code to replace the old login, and purge the files from the remote's history (for example with `git filter-repo`). See [CHANGELOG.md](CHANGELOG.md).
+
 ---
 
 ## Quick Start
 
 ```bash
-# 1. Install
-npm install -g claude-sync
+# 1. Install (the npm name "claude-sync" belongs to an unrelated package)
+git clone https://github.com/renefichtmueller/claude-sync.git
+cd claude-sync && npm install && npm install -g .
 
-# 2. Set up (interactive wizard)
+# 2. Set up (interactive wizard, or pass flags)
 claude-sync init
 
-# 3. Done. Claude remembers everything, everywhere.
+# 3. Sync
+claude-sync sync
 ```
 
-That's it. Three commands. Now your `.claude/` directory syncs across all your machines.
+To sync automatically when Claude Code sessions start and end, add the [session hooks](#auto-sync-on-session-startend).
 
 ### Installing from source
 
@@ -69,8 +75,8 @@ Claude Code's `.claude/` directory stores everything — your memory, your skill
 | **New machine** | 30 min setup | `claude-sync init` (30 sec) |
 | **Memory** | Lost on each device | Merged across all devices |
 | **Skills** | Device-specific | Available everywhere |
-| **Settings** | Manual copy | Auto-synced |
-| **Activity logs** | Fragmented | Unified timeline |
+| **Settings** | Manual copy | Synced; changes from other devices need one confirmation |
+| **Activity logs** | Fragmented | Appends from all devices are kept |
 | **Project context** | Starts fresh | Picks up where you left off |
 
 ---
@@ -95,21 +101,31 @@ claude-sync init
   Setup complete!
 ```
 
-### Multiple Sync Backends
+### How syncing works
 
-Choose what works for you. Git for developers. iCloud for simplicity. Syncthing for privacy. rsync for control.
+Git and Gitea are the recommended backends. Every sync:
 
-### Smart Conflict Resolution
+1. commits this device's current state, including files you deleted since the last sync,
+2. merges the other devices' changes with git's three-way merge,
+3. applies only what the merge changed to `~/.claude`, then pushes.
 
-When two devices edit the same file, claude-sync knows what to do:
+| Situation | What happens |
+|-----------|--------------|
+| Different files changed on two devices | Both changes are kept |
+| Two devices appended to the same memory file or activity log | Both sides are kept (git `union` merge) |
+| The same lines changed on two devices | Sync stops, nothing is overwritten. Run `claude-sync sync --prefer local` or `--prefer remote` |
+| A file was deleted on another device | It is deleted here too (git backends) |
+| A new device joins | It takes over the shared state and adds its own files; nothing is deleted on the first sync |
 
-| File Type | Strategy | How It Works |
-|-----------|----------|-------------|
-| Memory files | Merge & Append | New entries from both devices, deduplicated |
-| Settings | Latest Wins | Most recent timestamp takes priority |
-| Activity logs | Chronological Merge | All entries, sorted by date |
-| Skills | Latest Version | Most recently modified version wins |
-| CLAUDE.md | Ask User | Shows diff, lets you choose |
+A snapshot of `~/.claude` is taken before every sync (see [Backup & History](#backup--history)).
+
+### Never synced
+
+These stay on the device, whatever your configuration says: `.credentials.json`, `settings.local.json`, `.env` / `.env.*` (examples are allowed), `*.pem`, `*.key`, SSH keys, `shell-snapshots/`, `session-env/`, `ide/` and `statsig/`.
+
+### Changes that can run commands
+
+`settings.json` (hooks) and `plugins/` (plugin hooks and MCP servers) can make Claude Code run commands. When another device changes them, claude-sync does not apply the change. It stores it in `~/.claude-sync/incoming/` and tells you; after reviewing, run `claude-sync sync --accept-incoming` (or `--reject-incoming`). Whoever can write to your sync target therefore cannot run code on your machines unnoticed.
 
 With the git backend, these strategies only apply when both devices changed the same file since they last synced. A file changed on only one device takes that device's version as-is, so edits that remove or reword lines propagate too.
 
@@ -118,8 +134,10 @@ With the git backend, these strategies only apply when both devices changed the 
 Don't want to sync everything? Pick what matters:
 
 ```bash
-claude-sync config --include memory,skills --exclude settings
+claude-sync config --include projects,skills,CLAUDE.md --exclude todos
 ```
+
+Include and exclude lists apply to this device only: it stops sending and receiving those paths. Files already in the sync target stay there for your other devices; to remove them everywhere, delete them on a device that syncs them.
 
 ### Device Registry
 
@@ -162,29 +180,28 @@ claude-sync status --short
 
 ### Auto-Sync on Session Start/End
 
-Claude Code session starts? Pull the latest. Session ends? Push your changes. No manual intervention.
+Pull when a Claude Code session starts, push when it ends. Enable it in claude-sync, then add the hooks to `~/.claude/settings.json`:
 
 ```bash
-# Enable (default)
 claude-sync config --auto-sync
+```
 
-# Disable
-claude-sync config --no-auto-sync
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "claude-sync hook session-start" }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "claude-sync hook session-end" }] }]
+  }
+}
 ```
 
 ### Encryption at Rest
 
-Optionally encrypt your `.claude/` contents before syncing. Uses [age](https://age-encryption.org) encryption.
-
-```bash
-claude-sync config --encrypt
-```
-
-Your memory files are encrypted in the sync target. Only your devices can read them.
+Not implemented yet. Files are synced unencrypted, so use a private remote you control. The `--encrypt` flag only prints this notice.
 
 ### Backup & History
 
-Every sync creates a snapshot. Roll back to any point in time:
+A local snapshot is taken before every sync. Roll back to any point in time:
 
 ```bash
 claude-sync history
@@ -196,22 +213,30 @@ claude-sync restore a1b2c3
 
 ### Works with claude-cortex
 
-If you use [claude-cortex](https://github.com/anthropics/claude-cortex) for enhanced memory, claude-sync handles the sync automatically. They're designed to complement each other:
+If you use [claude-cortex](https://github.com/renefichtmueller/claude-cortex) for memory, its files live in `~/.claude` and are synced like everything else:
 
 - **claude-cortex** = better memory *on one device*
 - **claude-sync** = same memory *across all devices*
+
+### Not implemented yet
+
+- Encryption at rest
+- The real-time file watcher (`watchEnabled` is stored but nothing runs it); use the session hooks
 
 ---
 
 ## Sync Backends
 
-| Backend | Privacy | Speed | Setup | Best For |
-|---------|---------|-------|-------|----------|
-| **Git** | Medium | Fast | Easy | Developers who want version history |
-| **iCloud/Dropbox/OneDrive** | Low | Automatic | Easiest | Non-technical users, "just works" |
-| **Syncthing** | Maximum | Real-time | Medium | Privacy-focused, no cloud |
-| **rsync/SSH** | Maximum | On-demand | Advanced | Server admins, direct sync |
-| **Custom** | Varies | Varies | Flexible | Existing sync infrastructure |
+| Backend | Status | Merges, conflicts, deletions | Best For |
+|---------|--------|------------------------------|----------|
+| **Git** | Recommended | Yes | Developers who want version history |
+| **Gitea** | Recommended | Yes | Self-hosted Git, auto-creates the repo |
+| **iCloud/Dropbox/OneDrive** | Experimental | No: last copy wins, deletions are not synced | Single-user setups |
+| **Syncthing** | Experimental | No: last copy wins, deletions are not synced | No cloud |
+| **rsync/SSH** | Experimental | No: last copy wins, deletions are not synced | Direct machine-to-machine |
+| **Custom** | Experimental | Depends on your commands | Existing sync infrastructure |
+
+All backends apply the never-synced list and hold `settings.json` / `plugins/` changes for review.
 
 ### Git (Recommended)
 
@@ -247,7 +272,7 @@ claude-sync init --backend rsync --rsync-target me@server:~/.claude-sync-data
 
 ### Custom
 
-Bring your own sync command. Use `{path}` as a placeholder for the `.claude/` path.
+Bring your own sync command. `{path}` is a filtered staging copy (push) or an empty staging folder (pull), never `~/.claude` itself. Placeholders are inserted shell-quoted, so do not add your own quotes around them.
 
 ```bash
 claude-sync init --backend custom \
@@ -265,7 +290,11 @@ claude-sync init --backend custom \
 | `claude-sync sync` | Manual sync (push + pull) |
 | `claude-sync sync --push` | Push local changes only |
 | `claude-sync sync --pull` | Pull remote changes only |
+| `claude-sync sync --prefer local\|remote` | Resolve conflicts with this side |
+| `claude-sync sync --accept-incoming` | Apply held `settings.json` / `plugins/` changes |
+| `claude-sync sync --reject-incoming` | Discard held changes |
 | `claude-sync sync --dry-run` | Show what would change |
+| `claude-sync hook session-start\|session-end` | Run from Claude Code hooks |
 | `claude-sync status` | Show sync status |
 | `claude-sync status --short` | Compact status (for prompts) |
 | `claude-sync devices` | List connected devices |
@@ -273,7 +302,6 @@ claude-sync init --backend custom \
 | `claude-sync config` | View configuration |
 | `claude-sync config --include <patterns>` | Set include patterns |
 | `claude-sync config --exclude <patterns>` | Set exclude patterns |
-| `claude-sync config --encrypt` | Enable encryption |
 | `claude-sync config --auto-sync` | Enable auto-sync |
 | `claude-sync history` | View snapshots |
 | `claude-sync history --prune 20` | Keep only 20 most recent |
@@ -304,7 +332,7 @@ Your Devices                    Sync Target
 3. **Session ends**: claude-sync pushes your changes
 4. **Switch devices**: Step 1 again. Claude knows everything.
 
-Smart conflict resolution handles the edge cases when two devices edit simultaneously.
+When two devices change the same lines, sync stops and asks you to choose instead of overwriting.
 
 ---
 
@@ -328,7 +356,7 @@ Configuration is stored in `~/.claude-sync/config.json`:
   "autoSync": {
     "onSessionStart": true,
     "onSessionEnd": true,
-    "watchEnabled": true,
+    "watchEnabled": false,
     "watchDebounceMs": 2000
   },
   "selective": {
@@ -343,11 +371,11 @@ Configuration is stored in `~/.claude-sync/config.json`:
 
 ## Security
 
-- **Encryption at rest**: Optional age encryption for all synced files
-- **No telemetry**: Zero data collection, zero phone-home
-- **Your data stays yours**: All backends are self-hosted or under your control
+- **Credentials never leave the device**: see [Never synced](#never-synced)
+- **No remote code execution through sync**: `settings.json` and `plugins/` changes are held for review
+- **Encryption at rest**: not implemented yet; use a private remote
+- **No telemetry**: zero data collection, zero phone-home
 - **SSH key auth**: rsync backend uses SSH keys, never passwords
-- **Private repos**: Git backend works with private repos only
 
 See [docs/security.md](docs/security.md) for details.
 
@@ -359,14 +387,8 @@ See [docs/security.md](docs/security.md) for details.
 - **Git** (for git backend)
 - **rsync** (for rsync backend)
 - **Syncthing** (for syncthing backend)
-- **age** (for encryption — `brew install age` / `apt install age`)
 
 ---
-
-## Related Projects
-
-- **[claude-cortex](https://github.com/renefichtmueller/claude-cortex)** — Structured persistent memory for Claude Code. The knowledge that claude-sync distributes.
-- **[slop-radar](https://github.com/renefichtmueller/slop-radar)** — AI slop detection. 245 English + 127 German phrases. CLI + Claude Code skill.
 
 ## Contributing
 

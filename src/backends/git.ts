@@ -1,463 +1,55 @@
 /**
  * Git sync backend — the recommended default
  *
- * Auto-commits and pushes .claude/ contents to a private Git repo.
- * On other devices, pulls the latest state.
- *
- * This is the best balance of version history, speed, and portability.
+ * Commits .claude/ contents to a private Git repo and merges changes from
+ * other devices with git's three-way merge (see git-sync.ts).
  */
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import type { SyncBackend, BackendConfig, SyncResult, SyncStatus, SelectiveSyncConfig } from '../types.js';
-import { Merger } from '../core/merger.js';
-import { shouldSyncPath } from '../core/selective.js';
+import type { SyncBackend, BackendConfig, SyncResult, SyncStatus, TransferOptions } from '../types.js';
+import { GitSync } from './git-sync.js';
 
 const execFileAsync = promisify(execFile);
 
-const SYNC_ALL: SelectiveSyncConfig = { mode: 'all', include: [], exclude: [] };
-
 export class GitBackend implements SyncBackend {
   readonly type = 'git' as const;
-  private repoDir: string;
-  private remoteUrl: string;
-  private branch: string;
-  private merger = new Merger();
-  private selectiveConfig: SelectiveSyncConfig;
+  private engine: GitSync;
 
-  constructor(config?: BackendConfig, repoDirOverride?: string, selectiveConfig?: SelectiveSyncConfig) {
-    this.repoDir = repoDirOverride ?? path.join(os.homedir(), '.claude-sync', 'repo');
-    this.remoteUrl = config?.remoteUrl ?? '';
-    this.branch = config?.branch ?? 'main';
-    // Defaults to "sync everything" so anything constructing a GitBackend directly (tests,
-    // other tooling) without passing this keeps today's behavior - only getBackend() (the real
-    // CLI path) has a SyncConfig.selective to pass through.
-    this.selectiveConfig = selectiveConfig ?? SYNC_ALL;
+  constructor(config?: BackendConfig) {
+    this.engine = new GitSync(
+      path.join(os.homedir(), '.claude-sync', 'repo'),
+      config?.remoteUrl ?? '',
+      config?.branch ?? 'main',
+      'git'
+    );
   }
 
   async init(config: BackendConfig): Promise<void> {
-    this.remoteUrl = config.remoteUrl ?? '';
-    this.branch = config.branch ?? 'main';
-
-    await fs.mkdir(this.repoDir, { recursive: true });
-
-    // Check if already a git repo
-    const isRepo = await this.isGitRepo();
-
-    if (!isRepo) {
-      if (this.remoteUrl) {
-        // Clone the remote repo
-        try {
-          await execFileAsync('git', ['clone', this.remoteUrl, this.repoDir]);
-        } catch {
-          // Remote might be empty. Init locally and set remote.
-          await execFileAsync('git', ['init', this.repoDir]);
-          await this.git('remote', 'add', 'origin', this.remoteUrl);
-          await this.git('checkout', '-b', this.branch);
-        }
-      } else {
-        await execFileAsync('git', ['init', this.repoDir]);
-        await this.git('checkout', '-b', this.branch);
-      }
-    }
-
-    // Ensure .gitignore exists
-    const gitignorePath = path.join(this.repoDir, '.gitignore');
-    try {
-      await fs.access(gitignorePath);
-    } catch {
-      await fs.writeFile(gitignorePath, '.DS_Store\nThumbs.db\n*.lock\n', 'utf-8');
-    }
+    this.engine = new GitSync(
+      path.join(os.homedir(), '.claude-sync', 'repo'),
+      config.remoteUrl ?? '',
+      config.branch ?? 'main',
+      'git'
+    );
+    await this.engine.ensureRepo();
   }
 
-  async push(sourcePath: string): Promise<SyncResult> {
-    const start = Date.now();
-    const filesChanged: string[] = [];
-
-    try {
-      // Copy .claude/ contents into the repo working directory
-      await this.syncToRepo(sourcePath);
-
-      // Stage all changes
-      await this.git('add', '-A');
-
-      // Check if there are changes to commit
-      const { stdout: status } = await this.gitOutput('status', '--porcelain');
-
-      if (status.trim() === '') {
-        return {
-          success: true,
-          filesChanged: [],
-          conflicts: [],
-          timestamp: new Date().toISOString(),
-          duration: Date.now() - start,
-        };
-      }
-
-      // Parse changed files
-      const lines = status.trim().split('\n');
-      for (const line of lines) {
-        const file = line.slice(3).trim();
-        if (file) filesChanged.push(file);
-      }
-
-      // Commit
-      const timestamp = new Date().toISOString();
-      const hostname = os.hostname();
-      await this.git('commit', '-m', `sync: ${hostname} at ${timestamp}`);
-
-      // Push if remote is configured
-      if (this.remoteUrl) {
-        try {
-          await this.git('push', 'origin', this.branch);
-        } catch (err) {
-          // Push failed (likely needs pull first)
-          return {
-            success: false,
-            filesChanged,
-            conflicts: [],
-            timestamp,
-            duration: Date.now() - start,
-            error: `Push failed: ${(err as Error).message}. Try pulling first.`,
-          };
-        }
-      }
-
-      return {
-        success: true,
-        filesChanged,
-        conflicts: [],
-        timestamp,
-        duration: Date.now() - start,
-      };
-    } catch (err) {
-      return {
-        success: false,
-        filesChanged,
-        conflicts: [],
-        timestamp: new Date().toISOString(),
-        duration: Date.now() - start,
-        error: (err as Error).message,
-      };
-    }
+  async push(sourcePath: string, options?: TransferOptions): Promise<SyncResult> {
+    return this.engine.sync(sourcePath, true, options);
   }
 
-  async pull(targetPath: string): Promise<SyncResult> {
-    const start = Date.now();
-
-    try {
-      const filesChanged: string[] = [];
-
-      // Every sync ends with push() committing this device's live files, so HEAD before merging
-      // is what this device had after its last sync: the base for a three-way merge per file.
-      const baseRev = await this.headRev();
-
-      if (this.remoteUrl) {
-        // Fetch and check for changes
-        await this.git('fetch', 'origin', this.branch);
-
-        const { stdout: diffOutput } = await this.gitOutput(
-          'diff', '--name-only', `HEAD..origin/${this.branch}`
-        );
-
-        if (diffOutput.trim()) {
-          filesChanged.push(...diffOutput.trim().split('\n'));
-        }
-
-        // Merge
-        try {
-          await this.git('merge', `origin/${this.branch}`, '--no-edit');
-        } catch (err) {
-          if (!/refusing to merge unrelated histories/i.test((err as Error).message)) {
-            throw err;
-          }
-          // The local repo was initialized independently of the remote (e.g. a
-          // clone attempt failed and init() fell back to `git init` locally).
-          // Retry allowing unrelated histories instead of losing local history.
-          try {
-            await this.git(
-              'merge', `origin/${this.branch}`, '--no-edit', '--allow-unrelated-histories'
-            );
-          } catch (mergeErr) {
-            await this.git('merge', '--abort').catch(() => {});
-            throw new Error(
-              `Merge conflict while reconciling unrelated histories: ${(mergeErr as Error).message}`
-            );
-          }
-        }
-      }
-
-      // Copy repo contents to the target .claude/ directory
-      await this.syncFromRepo(targetPath, baseRev);
-
-      return {
-        success: true,
-        filesChanged,
-        conflicts: [],
-        timestamp: new Date().toISOString(),
-        duration: Date.now() - start,
-      };
-    } catch (err) {
-      return {
-        success: false,
-        filesChanged: [],
-        conflicts: [],
-        timestamp: new Date().toISOString(),
-        duration: Date.now() - start,
-        error: (err as Error).message,
-      };
-    }
+  async pull(targetPath: string, options?: TransferOptions): Promise<SyncResult> {
+    return this.engine.sync(targetPath, false, options);
   }
 
   async status(): Promise<SyncStatus> {
-    try {
-      const isRepo = await this.isGitRepo();
-      if (!isRepo) {
-        return {
-          connected: false,
-          lastSync: null,
-          pendingChanges: 0,
-          availableUpdates: 0,
-          backend: 'git',
-          error: 'Git repo not initialized',
-        };
-      }
-
-      // Count local uncommitted changes
-      const { stdout: localStatus } = await this.gitOutput('status', '--porcelain');
-      const pendingChanges = localStatus.trim()
-        ? localStatus.trim().split('\n').length
-        : 0;
-
-      // Check for remote updates
-      let availableUpdates = 0;
-      if (this.remoteUrl) {
-        try {
-          await this.git('fetch', 'origin', this.branch);
-          const { stdout: behindCount } = await this.gitOutput(
-            'rev-list', '--count', `HEAD..origin/${this.branch}`
-          );
-          availableUpdates = parseInt(behindCount.trim(), 10) || 0;
-        } catch {
-          // Remote not available
-        }
-      }
-
-      // Get last commit date
-      let lastSync: string | null = null;
-      try {
-        const { stdout: lastDate } = await this.gitOutput(
-          'log', '-1', '--format=%aI'
-        );
-        lastSync = lastDate.trim() || null;
-      } catch {
-        // No commits yet
-      }
-
-      return {
-        connected: true,
-        lastSync,
-        pendingChanges,
-        availableUpdates,
-        backend: 'git',
-      };
-    } catch (err) {
-      return {
-        connected: false,
-        lastSync: null,
-        pendingChanges: 0,
-        availableUpdates: 0,
-        backend: 'git',
-        error: (err as Error).message,
-      };
-    }
+    return this.engine.status();
   }
 
   async isAvailable(): Promise<boolean> {
-    try {
-      await execFileAsync('git', ['--version']);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  // ── Private helpers ────────────────────────────────────────────
-
-  private async git(...args: string[]): Promise<void> {
-    await execFileAsync('git', ['-C', this.repoDir, ...args]);
-  }
-
-  private async gitOutput(...args: string[]): Promise<{ stdout: string }> {
-    return execFileAsync('git', ['-C', this.repoDir, ...args]);
-  }
-
-  private async headRev(): Promise<string | null> {
-    try {
-      const { stdout } = await this.gitOutput('rev-parse', '--verify', '--quiet', 'HEAD');
-      return stdout.trim() || null;
-    } catch {
-      // No commits yet, so there's no base to compare against.
-      return null;
-    }
-  }
-
-  /**
-   * A file's content at a given commit, or null if it didn't exist there. relPath is relative to
-   * the repo root with forward slashes, which is what `git show <rev>:<path>` expects.
-   */
-  private async fileAtRev(rev: string, relPath: string): Promise<string | null> {
-    try {
-      const { stdout } = await execFileAsync(
-        'git',
-        ['-C', this.repoDir, 'show', `${rev}:${relPath}`],
-        { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 }
-      );
-      return stdout;
-    } catch {
-      return null;
-    }
-  }
-
-  private async isGitRepo(): Promise<boolean> {
-    try {
-      await fs.access(path.join(this.repoDir, '.git'));
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Copy .claude/ contents into the git repo working directory
-   */
-  private async syncToRepo(sourcePath: string): Promise<void> {
-    await this.copyTree(sourcePath, this.repoDir, ['.git'], '');
-  }
-
-  /**
-   * Copy git repo contents to the .claude/ directory.
-   *
-   * Uses mergeTree, not copyTree: a plain overwrite here would clobber any
-   * live edit made between the last push and this pull (e.g. memory files
-   * written mid-session) with whatever the repo mirror last had. mergeTree
-   * runs each file through the Merger's configured strategy (merge-append
-   * for memory files, latest-wins for settings, etc.) instead.
-   *
-   * baseRev is the commit this device had before the pull merged anything in. The Merger uses a
-   * file's content there to tell which side actually changed.
-   */
-  private async syncFromRepo(targetPath: string, baseRev: string | null): Promise<void> {
-    await this.mergeTree(this.repoDir, targetPath, ['.git', '.gitignore'], '', baseRev);
-  }
-
-  /**
-   * relativeBase accumulates the path relative to the original sourcePath as recursion
-   * descends, so each file can be tested against a full multi-segment selective-sync pattern
-   * (e.g. a wildcard project name followed by a literal memory subdirectory and a trailing
-   * double-star) rather than just its own directory name. Deliberately does not
-   * prune recursion at a directory whose own relative path fails the filter - a directory like
-   * `projects` won't itself match a pattern that only matches something nested inside it (see
-   * selective.ts's matchGlob doc comment) - so every directory is still walked, and the
-   * filtering decision is made per file. This can leave some empty directories on the
-   * destination (a walked-but-nothing-matched directory still gets its own `mkdir`) - a minor
-   * cosmetic cost, not a correctness problem worth a pre-scan to avoid.
-   */
-  private async copyTree(
-    source: string,
-    target: string,
-    exclude: string[],
-    relativeBase: string
-  ): Promise<void> {
-    await fs.mkdir(target, { recursive: true });
-
-    let entries;
-    try {
-      entries = await fs.readdir(source, { withFileTypes: true });
-    } catch {
-      return;
-    }
-
-    for (const entry of entries) {
-      if (exclude.includes(entry.name)) continue;
-
-      const srcPath = path.join(source, entry.name);
-      const destPath = path.join(target, entry.name);
-      const relPath = relativeBase ? `${relativeBase}/${entry.name}` : entry.name;
-
-      if (entry.isDirectory()) {
-        await this.copyTree(srcPath, destPath, exclude, relPath);
-      } else if (entry.isFile()) {
-        if (!shouldSyncPath(relPath, this.selectiveConfig)) continue;
-        await fs.copyFile(srcPath, destPath);
-      }
-    }
-  }
-
-  /**
-   * Like copyTree, but for existing destination files, merges through the
-   * Merger's configured strategy for that path instead of blindly
-   * overwriting. New files (nothing at the destination yet) are just copied
-   * - there's nothing local to conflict with.
-   */
-  private async mergeTree(
-    source: string,
-    target: string,
-    exclude: string[],
-    relativeBase: string,
-    baseRev: string | null
-  ): Promise<void> {
-    await fs.mkdir(target, { recursive: true });
-
-    let entries;
-    try {
-      entries = await fs.readdir(source, { withFileTypes: true });
-    } catch {
-      return;
-    }
-
-    for (const entry of entries) {
-      if (exclude.includes(entry.name)) continue;
-
-      const srcPath = path.join(source, entry.name);
-      const destPath = path.join(target, entry.name);
-      const relPath = relativeBase ? `${relativeBase}/${entry.name}` : entry.name;
-
-      if (entry.isDirectory()) {
-        await this.mergeTree(srcPath, destPath, exclude, relPath, baseRev);
-      } else if (entry.isFile()) {
-        if (!shouldSyncPath(relPath, this.selectiveConfig)) continue;
-        await this.mergeFile(srcPath, destPath, relPath, baseRev);
-      }
-    }
-  }
-
-  private async mergeFile(
-    srcPath: string,
-    destPath: string,
-    relPath: string,
-    baseRev: string | null
-  ): Promise<void> {
-    let destExists = true;
-    try {
-      await fs.access(destPath);
-    } catch {
-      destExists = false;
-    }
-
-    if (!destExists) {
-      await fs.copyFile(srcPath, destPath);
-      return;
-    }
-
-    // merger.merge treats its first argument as "local" (this device's
-    // current state) and the second as "remote" (what came from the repo
-    // mirror) - that maps directly onto destPath/srcPath here.
-    const getBase = baseRev ? () => this.fileAtRev(baseRev, relPath) : undefined;
-    const { content } = await this.merger.merge(destPath, srcPath, relPath, getBase);
-    await fs.writeFile(destPath, content, 'utf-8');
+    return execFileAsync('git', ['--version']).then(() => true, () => false);
   }
 }

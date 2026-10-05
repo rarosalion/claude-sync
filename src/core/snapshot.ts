@@ -18,6 +18,7 @@
  *    snapshot when the fingerprint matches.
  */
 
+import { writeFileAtomic } from './atomic.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -270,9 +271,7 @@ export class SnapshotManager {
     await fs.mkdir(this.snapshotsDir, { recursive: true });
     await this.withManifestLock(async () => {
       const next = mutate(await this.getManifest());
-      const tmp = `${this.manifestFile}.${process.pid}.tmp`;
-      await fs.writeFile(tmp, JSON.stringify(next, null, 2), 'utf-8');
-      await fs.rename(tmp, this.manifestFile);
+      await writeFileAtomic(this.manifestFile, JSON.stringify(next, null, 2));
     });
   }
 

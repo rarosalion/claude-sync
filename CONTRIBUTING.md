@@ -56,7 +56,7 @@ Open an issue describing:
 
 ### Commit Messages and Releases
 
-Releases are fully automatic. Every merge to `main` is analysed by [semantic-release](https://semantic-release.gitbook.io) (`.github/workflows/release.yml`), which picks the next version from the commit messages, bumps `package.json`, `package-lock.json` and `VERSION` in `src/index.ts`, updates `CHANGELOG.md`, tags `vX.Y.Z` and publishes a GitHub release. So every commit in a pull request must be a [Conventional Commit](https://www.conventionalcommits.org): `type(optional-scope)!: description`. The `commit-lint` check fails the PR otherwise.
+Releases are fully automatic. Every merge to `main` is analysed by [semantic-release](https://semantic-release.gitbook.io) (`.github/workflows/release.yml`), which picks the next version from the commit messages, bumps `package.json`, `package-lock.json`, updates `CHANGELOG.md`, tags `vX.Y.Z` and publishes a GitHub release. So every commit in a pull request must be a [Conventional Commit](https://www.conventionalcommits.org): `type(optional-scope)!: description`. The `commit-lint` check fails the PR otherwise.
 
 | Type | Effect on the version |
 |---|---|

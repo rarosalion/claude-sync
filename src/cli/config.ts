@@ -3,7 +3,7 @@
  */
 
 import chalk from 'chalk';
-import { loadConfig, saveConfig } from './helpers.js';
+import { loadConfig, saveConfig, ENCRYPTION_NOT_IMPLEMENTED } from './helpers.js';
 
 interface ConfigOptions {
   include?: string;
@@ -52,10 +52,8 @@ export async function configCommand(options: ConfigOptions): Promise<void> {
 
   // ── Encryption ─────────────────────────────────────────────
 
-  if (options.encrypt !== undefined) {
-    config.encryption.enabled = options.encrypt;
-    modified = true;
-    console.log(chalk.green(`  Encryption: ${options.encrypt ? 'enabled' : 'disabled'}`));
+  if (options.encrypt) {
+    console.log(chalk.yellow(`  ${ENCRYPTION_NOT_IMPLEMENTED}`));
   }
 
   // ── Auto-sync ──────────────────────────────────────────────
