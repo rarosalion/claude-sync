@@ -44,4 +44,4 @@ export { CustomBackend } from './backends/custom.js';
 
 // Kept equal to package.json's "version" by the release workflow (.releaserc.json rewrites this
 // line); tests/version.test.ts fails if the two drift. Don't edit it by hand.
-export const VERSION = '0.3.1';
+export const VERSION = '0.3.2';
