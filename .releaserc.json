@@ -1,5 +1,6 @@
 {
   "branches": ["main"],
+  "repositoryUrl": "https://github.com/rarosalion/claude-sync.git",
   "tagFormat": "v${version}",
   "plugins": [
     "@semantic-release/commit-analyzer",
