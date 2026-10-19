@@ -1,3 +1,10 @@
+## [0.4.1](https://github.com/rarosalion/claude-sync/compare/v0.4.0...v0.4.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* overwrite read-only files when copying into the sync repo ([d5cd61f](https://github.com/rarosalion/claude-sync/commit/d5cd61f1e4742e4d22ec64fc186438f96e9f43ff)), closes [home-terraform#30](https://github.com/home-terraform/issues/30)
+
 # [0.4.0](https://github.com/rarosalion/claude-sync/compare/v0.3.2...v0.4.0) (2026-10-05)
 
 
