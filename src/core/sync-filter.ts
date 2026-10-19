@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { SelectiveSyncConfig } from '../types.js';
+import { copyFileOverwrite } from './fs-utils.js';
 
 /**
  * Never leaves the device, whatever the user's selective-sync config says.
@@ -125,7 +126,7 @@ export async function copyFiltered(
     if (entry.isDirectory()) {
       copied.push(...(await copyFiltered(srcPath, destPath, options, rel)));
     } else if (entry.isFile()) {
-      await fs.copyFile(srcPath, destPath);
+      await copyFileOverwrite(srcPath, destPath);
       copied.push(rel);
     }
   }

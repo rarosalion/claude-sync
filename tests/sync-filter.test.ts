@@ -98,6 +98,17 @@ describe('filesystem helpers', () => {
     expect(await exists(path.join(tmp, 'dst/.credentials.json'))).toBe(false);
   });
 
+  it('copyFiltered overwrites read-only files already in the destination', async () => {
+    const src = path.join(tmp, 'src');
+    const dst = path.join(tmp, 'dst');
+    await write(src, 'objects/pack.idx', 'new');
+    await write(dst, 'objects/pack.idx', 'old');
+    await fs.chmod(path.join(dst, 'objects/pack.idx'), 0o444);
+    const copied = await copyFiltered(src, dst, { filter: createSyncFilter() });
+    expect(copied).toEqual(['objects/pack.idx']);
+    expect(await fs.readFile(path.join(dst, 'objects/pack.idx'), 'utf8')).toBe('new');
+  });
+
   it('purgeNeverSync removes secrets that older versions staged', async () => {
     const repo = path.join(tmp, 'repo');
     await write(repo, '.git/HEAD');

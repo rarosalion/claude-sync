@@ -11,6 +11,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import type { EncryptionConfig } from '../types.js';
+import { copyFileOverwrite } from './fs-utils.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -77,7 +78,7 @@ export class Encryption {
     if (!this.config.enabled || !this.config.recipientKey) {
       // No encryption, just copy
       await fs.mkdir(path.dirname(outputPath), { recursive: true });
-      await fs.copyFile(inputPath, outputPath);
+      await copyFileOverwrite(inputPath, outputPath);
       return;
     }
 
@@ -97,7 +98,7 @@ export class Encryption {
     if (!this.config.enabled || !this.config.identityFile) {
       // No encryption, just copy
       await fs.mkdir(path.dirname(outputPath), { recursive: true });
-      await fs.copyFile(inputPath, outputPath);
+      await copyFileOverwrite(inputPath, outputPath);
       return;
     }
 
