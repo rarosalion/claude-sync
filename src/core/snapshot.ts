@@ -25,6 +25,7 @@ import * as os from 'node:os';
 import * as crypto from 'node:crypto';
 import { CONFIG_DIR, SNAPSHOTS_DIR } from '../types.js';
 import type { Snapshot } from '../types.js';
+import { copyFileOverwrite } from './fs-utils.js';
 
 /**
  * Top-level entries of ~/.claude that are never snapshotted: caches, logs, plugin installs and
@@ -389,7 +390,7 @@ export class SnapshotManager {
       if (entry.isDirectory()) {
         await this.copyDirectory(srcPath, destPath, applyExcludes, entryRel);
       } else if (entry.isFile()) {
-        await fs.copyFile(srcPath, destPath);
+        await copyFileOverwrite(srcPath, destPath);
       }
     }
   }
