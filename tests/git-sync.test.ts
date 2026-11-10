@@ -84,6 +84,36 @@ describe('GitSync', () => {
     expect(await read(b, 'CLAUDE.md')).toBe('keep me');
   });
 
+  it('a new device with an empty ~/.claude does not wipe the remote when it pulls and then pushes', async () => {
+    const a = device('a');
+    await write(a, 'CLAUDE.md', 'keep me');
+    await write(a, 'skills/x/SKILL.md', 'skill');
+    await sync(a);
+
+    const b = device('b');
+    await fs.mkdir(b.claude, { recursive: true });
+    // This is the order `claude-sync sync` uses: pull, then push.
+    expect((await sync(b, false)).success).toBe(true);
+    expect((await sync(b, true)).success).toBe(true);
+    expect(remoteFiles()).toEqual(expect.arrayContaining(['CLAUDE.md', 'skills/x/SKILL.md']));
+    expect(await read(b, 'CLAUDE.md')).toBe('keep me');
+  });
+
+  it('a repo cloned by something else (no marker, no last-sync) does not wipe the remote on pull then push', async () => {
+    const a = device('a');
+    await write(a, 'CLAUDE.md', 'keep me');
+    await sync(a);
+
+    const b = device('b');
+    await fs.mkdir(b.claude, { recursive: true });
+    // Provisioning tools such as Ansible's git module clone the repo themselves.
+    execFileSync('git', ['clone', '-q', remote, path.join(tmp, 'b', 'repo')]);
+    expect((await sync(b, false)).success).toBe(true);
+    expect((await sync(b, true)).success).toBe(true);
+    expect(remoteFiles()).toContain('CLAUDE.md');
+    expect(await read(b, 'CLAUDE.md')).toBe('keep me');
+  });
+
   it('keeps an unpushed local edit when another device changed a different file', async () => {
     const a = device('a');
     const b = device('b');

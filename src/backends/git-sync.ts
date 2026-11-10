@@ -149,8 +149,12 @@ export class GitSync {
       await this.ensureRepo();
       const mode = await this.syncMode();
       // A known device commits its edits and deletions first. A repo from an
-      // older version commits its edits but deletes nothing yet. A new device
-      // takes the shared state first and only then adds its own files.
+      // older version, or one cloned by a provisioning tool, commits its edits
+      // but deletes nothing yet. A new device takes the shared state first and
+      // only then adds its own files. Until a device is known, every tracked
+      // file is applied to claudeDir, not just the files the merge changed:
+      // otherwise a file that is missing locally would look deleted once the
+      // last-sync ref exists, and the next push would remove it for everyone.
       if (mode !== 'join') await this.stage(claudeDir, filter, heldDir, mode === 'known');
 
       const merge = await this.integrate(options.prefer);
@@ -159,9 +163,9 @@ export class GitSync {
       }
 
       const { applied, held } =
-        mode === 'join'
-          ? await this.applyFiles(await this.trackedFiles('HEAD'), [], claudeDir, filter, heldDir)
-          : await this.applyFiles(merge.changed, merge.deleted, claudeDir, filter, heldDir);
+        mode === 'known'
+          ? await this.applyFiles(merge.changed, merge.deleted, claudeDir, filter, heldDir)
+          : await this.applyFiles(await this.trackedFiles('HEAD'), [], claudeDir, filter, heldDir);
       if (mode === 'join') await this.stage(claudeDir, filter, heldDir, false);
 
       const pushed = publish ? await this.publish() : [];
