@@ -1,3 +1,10 @@
+## [0.4.2](https://github.com/rarosalion/claude-sync/compare/v0.4.1...v0.4.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* apply the whole tree on a first sync of a repo cloned by another tool ([7578d9d](https://github.com/rarosalion/claude-sync/commit/7578d9d49862fbc2f8a4c546a81d9e6c08caa676))
+
 ## [0.4.1](https://github.com/rarosalion/claude-sync/compare/v0.4.0...v0.4.1) (2026-10-19)
 
 
