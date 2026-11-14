@@ -1,3 +1,10 @@
+## [0.4.3](https://github.com/rarosalion/claude-sync/compare/v0.4.2...v0.4.3) (2026-11-14)
+
+
+### Bug Fixes
+
+* never sync skills/synced, the Claude app's per-device skills cache ([d0e301f](https://github.com/rarosalion/claude-sync/commit/d0e301f9795944e3bcd64a987f722e5041391a29))
+
 ## [0.4.2](https://github.com/rarosalion/claude-sync/compare/v0.4.1...v0.4.2) (2026-11-10)
 
 

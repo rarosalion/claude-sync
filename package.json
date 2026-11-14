@@ -1,6 +1,6 @@
 {
   "name": "claude-sync",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Sync your Claude Code .claude/ directory across all your devices. One brain, everywhere.",
   "keywords": [
     "claude",
