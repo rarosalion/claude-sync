@@ -39,6 +39,15 @@ describe('isNeverSync', () => {
     }
   });
 
+  it("blocks the Claude app's per-device skills cache by path, not by file name", () => {
+    for (const rel of ['skills/synced', 'skills/synced/abc/manifest.json', 'Skills/Synced/abc/.last-complete-round']) {
+      expect(isNeverSync(rel), rel).toBe(true);
+    }
+    for (const rel of ['skills/synced-notes/SKILL.md', 'skills/x/synced/a.md', 'plugins/p/manifest.json', 'manifest.json']) {
+      expect(isNeverSync(rel), rel).toBe(false);
+    }
+  });
+
   it('matches case-insensitively', () => {
     expect(isNeverSync('.Credentials.JSON')).toBe(true);
     expect(isNeverSync('keys/ID_RSA')).toBe(true);
