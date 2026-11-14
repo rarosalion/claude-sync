@@ -25,6 +25,15 @@ export const NEVER_SYNC: readonly string[] = [
   'statsig', // device-specific telemetry cache
 ];
 
+/**
+ * Never leaves the device either, but matched as a path prefix from the
+ * root rather than as a segment name, because the names inside are generic.
+ * `skills/synced` is the Claude app's own per-device skill cache (it keeps
+ * `manifest.json` and `.last-complete-round` there and rewrites them on each
+ * device), so two devices always conflict on it.
+ */
+export const NEVER_SYNC_PATHS: readonly string[] = ['skills/synced'];
+
 const NEVER_SYNC_ALLOWED: readonly string[] = ['.env.example', '.env.sample', '.env.template'];
 
 /**
@@ -52,6 +61,8 @@ function segments(relPath: string): string[] {
 }
 
 export function isNeverSync(relPath: string): boolean {
+  const normalized = segments(relPath).join('/').toLowerCase();
+  if (NEVER_SYNC_PATHS.some((p) => normalized === p || normalized.startsWith(`${p}/`))) return true;
   return segments(relPath).some(
     (seg) => !NEVER_SYNC_ALLOWED.includes(seg.toLowerCase()) && NEVER_SYNC_RE.some((re) => re.test(seg))
   );
